@@ -8,9 +8,9 @@ abstracted when it can store any objects."""
 maintainer: "Romain Calascibetta <romain.calascibetta@gmail.com>"
 authors: "Romain Calascibetta <romain.calascibetta@gmail.com>"
 license: "MIT"
-homepage: "https://github.com/mirage/ocaml-git"
-doc: "https://mirage.github.io/ocaml-git/"
-bug-reports: "https://github.com/mirage/ocaml-git/issues"
+homepage: "https://git.robur.coop/robur/carton" 
+doc: "https://robur-coop.github.io/carton/"
+bug-reports: "https://git.robur.coop/robur/carton/issues"
 depends: [
   "ocaml" {>= "4.08.0"}
   "dune" {>= "2.8.0"}
@@ -38,4 +38,4 @@ build: [
   ["dune" "build" "-p" name "-j" jobs]
   ["dune" "runtest" "-p" name "-j" jobs] {with-test}
 ]
-dev-repo: "git+https://github.com/mirage/ocaml-git.git"
+dev-repo: "git+https://github.com/robur-coop/carton.git"
