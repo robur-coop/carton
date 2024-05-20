@@ -35,6 +35,7 @@ depends: [
 ]
 conflicts: [ "result" {< "1.5"} ]
 build: [
+  ["dune" "subst"] {dev}
   ["dune" "build" "-p" name "-j" jobs]
   ["dune" "runtest" "-p" name "-j" jobs] {with-test}
 ]
