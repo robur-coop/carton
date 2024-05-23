@@ -1,3 +1,8 @@
+### 0.7.2 (2024-05-19) Paris - France
+
+- Remove the `result` dependency (@hannesm, mirage/ocaml-git#634)
+- Split out `carton` into `https://git.robur.coop/robur/carton` (@dinosaure)
+
 ### 0.7.1 (2024-02-12) Paris - France
 
 - Add a `Lwt.pause` to insert a cooperative point when we verify a PACK file (@dinosaure, @hannesm, #631)
