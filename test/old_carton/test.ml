@@ -119,7 +119,7 @@ let pp_kind ppf = function
   | `D -> Fmt.string ppf "d"
 
 let equal_kind a b =
-  match a, b with `A, `A | `B, `B | `C, `C | `D, `D -> true | _ -> false
+  match (a, b) with `A, `A | `B, `B | `C, `C | `D, `D -> true | _ -> false
 
 let kind = Alcotest.testable pp_kind equal_kind
 let optint = Alcotest.testable Optint.pp Optint.equal
@@ -155,8 +155,8 @@ let empty_pack, uid_empty_pack =
   let rs = Bytes.create ln in
   really_input ic rs 0 ln;
   close_in ic;
-  ( Bytes.unsafe_to_string rs,
-    Digestif.SHA1.of_raw_string (Bytes.sub_string rs (Bytes.length rs - 20) 20)
+  ( Bytes.unsafe_to_string rs
+  , Digestif.SHA1.of_raw_string (Bytes.sub_string rs (Bytes.length rs - 20) 20)
   )
 
 let test_empty_pack () =
@@ -174,12 +174,12 @@ let test_empty_pack () =
 module Fp = Carton.Dec.Fp (Uid)
 
 type fake_file_descriptor = {
-  mutable pos : int;
-  mutable lst : Bigstringaf.t list;
+    mutable pos: int
+  ; mutable lst: Bigstringaf.t list
 }
 
 let fd_and_read_of_bigstring_list lst =
-  let fd = { pos = 0; lst } in
+  let fd = { pos= 0; lst } in
   let read fd buf ~off ~len =
     match fd.lst with
     | [] -> Us.inj (IO.return 0)
@@ -190,7 +190,7 @@ let fd_and_read_of_bigstring_list lst =
         if fd.pos = Bigstringaf.length x then fd.lst <- r;
         Us.inj (IO.return len)
   in
-  fd, read
+  (fd, read)
 
 let ( <.> ) f g x = f (g x)
 
@@ -199,22 +199,19 @@ let valid_empty_pack () =
   let fd, read =
     fd_and_read_of_bigstring_list
       [
-        Bigstringaf.of_string ~off:0 ~len:(String.length empty_pack) empty_pack;
+        Bigstringaf.of_string ~off:0 ~len:(String.length empty_pack) empty_pack
       ]
   in
   let max, buf, _ = (IO.run <.> Us.prj) (Fp.check_header unix read fd) in
   let tmp0 = Bytes.create De.io_buffer_size in
   let tmp1 = Bigstringaf.create De.io_buffer_size in
-
   let decoder = Fp.decoder ~o ~allocate `Manual in
   let decoder =
     Fp.src decoder
       (Bigstringaf.of_string buf ~off:0 ~len:(String.length buf))
       0 (String.length buf)
   in
-
   Alcotest.(check int) "number" max 0;
-
   let rec go decoder =
     let open IO in
     match Fp.decode decoder with
@@ -230,7 +227,6 @@ let valid_empty_pack () =
         go decoder
     | `Peek _ -> Alcotest.fail "Unexpected `Peek"
   in
-
   IO.run (go decoder)
 
 module Verify = Carton.Dec.Verify (Uid) (Us) (IO)
@@ -240,7 +236,6 @@ let digest_like_git ~kind ?(off = 0) ?len buf =
     match len with Some len -> len | None -> Bigstringaf.length buf - off
   in
   let ctx = Digestif.SHA1.empty in
-
   let ctx =
     match kind with
     | `A -> Digestif.SHA1.feed_string ctx (Fmt.str "commit %d\000" len)
@@ -263,10 +258,10 @@ let verify_empty_pack () =
   in
   let oracle =
     {
-      Carton.Dec.digest = digest_like_git;
-      children = (fun ~cursor:_ ~uid:_ -> []);
-      where = (fun ~cursor:_ -> Alcotest.fail "Invalid call to [where]");
-      weight = (fun ~cursor:_ -> Alcotest.fail "Invalid call to [weight]");
+      Carton.Dec.digest= digest_like_git
+    ; children= (fun ~cursor:_ ~uid:_ -> [])
+    ; where= (fun ~cursor:_ -> Alcotest.fail "Invalid call to [where]")
+    ; weight= (fun ~cursor:_ -> Alcotest.fail "Invalid call to [weight]")
     }
   in
   IO.run (Verify.verify ~threads:1 ~map ~oracle ~verbose:ignore t ~matrix:[||])
@@ -304,8 +299,8 @@ let empty_index, uid_empty_index =
   let rs = Bytes.create ln in
   really_input ic rs 0 ln;
   close_in ic;
-  ( Bytes.unsafe_to_string rs,
-    Digestif.SHA1.of_raw_string (Bytes.sub_string rs (Bytes.length rs - 20) 20)
+  ( Bytes.unsafe_to_string rs
+  , Digestif.SHA1.of_raw_string (Bytes.sub_string rs (Bytes.length rs - 20) 20)
   )
 
 let index_of_empty_pack () =
@@ -313,7 +308,6 @@ let index_of_empty_pack () =
   let p = ref 0 and c = ref 0 in
   let encoder = Idx.encoder `Manual ~pack:uid_empty_pack [||] in
   Idx.dst encoder o 0 (Bigstringaf.length o);
-
   let rec go () =
     match Idx.encode encoder `Await with
     | `Partial ->
@@ -349,15 +343,14 @@ let index_of_one_entry () =
   let encoder =
     Idx.encoder `Manual ~pack:(Uid.of_hex "")
       [|
-        {
-          Carton.Dec.Idx.crc = Checkseum.Crc32.default;
-          offset = 0L;
-          uid = Uid.null;
-        };
+         {
+           Carton.Dec.Idx.crc= Checkseum.Crc32.default
+         ; offset= 0L
+         ; uid= Uid.null
+         }
       |]
   in
   Idx.dst encoder o 0 (Bigstringaf.length o);
-
   let rec go () =
     match Idx.encode encoder `Await with
     | `Partial ->
@@ -384,14 +377,11 @@ let file =
     let ic_a = open_in_bin a in
     let ic_b = open_in_bin b in
     let ln_a = in_channel_length ic_a and ln_b = in_channel_length ic_b in
-    if ln_a <> ln_b then (
-      close_in ic_a;
-      close_in ic_b;
-      false)
+    if ln_a <> ln_b then (close_in ic_a; close_in ic_b; false)
     else
       let bf_a = Bytes.create 0x1000 and bf_b = Bytes.create 0x1000 in
       let rec go () =
-        match input ic_a bf_a 0 0x1000, input ic_b bf_b 0 0x1000 with
+        match (input ic_a bf_a 0 0x1000, input ic_b bf_b 0 0x1000) with
         | 0, 0 -> true
         | rs_a, rs_b when rs_a = rs_b ->
             if not (Bytes.sub_string bf_a 0 rs_a = Bytes.sub_string bf_b 0 rs_b)
@@ -401,17 +391,15 @@ let file =
         | exception End_of_file -> true
       in
       let rs = go () in
-      close_in ic_a;
-      close_in ic_b;
-      rs
+      close_in ic_a; close_in ic_b; rs
   in
   Alcotest.testable Fmt.string compare
 
 let zip a b =
   if Array.length a <> Array.length b then Fmt.invalid_arg "Array.zip";
-  Array.init (Array.length a) (fun i -> a.(i), b.(i))
+  Array.init (Array.length a) (fun i -> (a.(i), b.(i)))
 
-type fd_with_length = { fd : Unix.file_descr; mx : int64 }
+type fd_with_length = { fd: Unix.file_descr; mx: int64 }
 
 let map { fd; mx } ~pos len =
   let len = min Int64.(sub mx pos) (Int64.of_int len) in
@@ -428,17 +416,14 @@ let verify_bomb_pack () =
   let decoder = Fp.decoder ~o ~allocate `Manual in
   let tmp0 = Bytes.create 0x1000 in
   let tmp1 = Bigstringaf.create 0x1000 in
-
   let ic = open_in_bin "bomb.pack" in
   let hash_expected =
     let len = in_channel_length ic in
     seek_in ic (len - 20);
     let res = really_input_string ic 20 in
     let res = Digestif.SHA1.of_raw_string res in
-    seek_in ic 0;
-    res
+    seek_in ic 0; res
   in
-
   let max, buf, _ =
     (IO.run <.> Us.prj)
       (Fp.check_header unix
@@ -448,13 +433,11 @@ let verify_bomb_pack () =
   let decoder =
     Fp.src decoder (Bigstringaf.of_string buf ~off:0 ~len:12) 0 12
   in
-
   let weight = Hashtbl.create max in
   let checks = Hashtbl.create max in
   let children = Hashtbl.create max in
   let where = Hashtbl.create max in
   let matrix = Array.make max Verify.unresolved_node in
-
   let rec go decoder =
     match Fp.decode decoder with
     | `Await decoder ->
@@ -468,7 +451,7 @@ let verify_bomb_pack () =
         Bigstringaf.blit_from_bytes tmp0 ~src_off:0 tmp1 ~dst_off:keep ~len;
         let decoder = Fp.src decoder tmp1 0 (keep + len) in
         go decoder
-    | `Entry ({ Fp.kind = Base _; offset; size; crc; _ }, decoder) ->
+    | `Entry ({ Fp.kind= Base _; offset; size; crc; _ }, decoder) ->
         let n = Fp.count decoder - 1 in
         Hashtbl.add checks offset crc;
         Hashtbl.add weight offset size;
@@ -476,16 +459,14 @@ let verify_bomb_pack () =
         matrix.(n) <- Verify.unresolved_base ~cursor:offset;
         go decoder
     | `Entry
-        ({ Fp.kind = Ofs { sub = s; source; target }; offset; crc; _ }, decoder)
+        ({ Fp.kind= Ofs { sub= s; source; target }; offset; crc; _ }, decoder)
       ->
         let n = Fp.count decoder - 1 in
         let base = Int64.(sub offset (of_int s)) in
-
         Hashtbl.add checks offset crc;
         Hashtbl.add weight base source;
         Hashtbl.add weight offset target;
         Hashtbl.add where offset n;
-
         (try
            let v = Hashtbl.find children (`Ofs base) in
            Hashtbl.add children (`Ofs base) (offset :: v)
@@ -495,7 +476,6 @@ let verify_bomb_pack () =
     | `Malformed err -> Alcotest.fail err
     | `End uid -> Alcotest.(check sha1) "hash" uid hash_expected
   in
-
   go decoder;
   close_in ic;
   let fd = Unix.openfile "bomb.pack" Unix.[ O_RDONLY ] 0o644 in
@@ -503,24 +483,22 @@ let verify_bomb_pack () =
     let st = Unix.LargeFile.fstat fd in
     st.Unix.LargeFile.st_size
   in
-
   let oracle =
     {
-      Carton.Dec.where = (fun ~cursor -> Hashtbl.find where cursor);
-      children =
+      Carton.Dec.where= (fun ~cursor -> Hashtbl.find where cursor)
+    ; children=
         (fun ~cursor ~uid ->
           match
-            ( Hashtbl.find_opt children (`Ofs cursor),
-              Hashtbl.find_opt children (`Ref uid) )
+            ( Hashtbl.find_opt children (`Ofs cursor)
+            , Hashtbl.find_opt children (`Ref uid) )
           with
           | Some a, Some b -> List.sort_uniq compare (a @ b)
           | Some x, None | None, Some x -> x
-          | None, None -> []);
-      digest = digest_like_git;
-      weight = (fun ~cursor -> Hashtbl.find weight cursor);
+          | None, None -> [])
+    ; digest= digest_like_git
+    ; weight= (fun ~cursor -> Hashtbl.find weight cursor)
     }
   in
-
   let z = Bigstringaf.create 0x1000 in
   let t =
     Carton.Dec.make { fd; mx } ~z ~allocate ~uid_ln:Uid.length
@@ -528,7 +506,6 @@ let verify_bomb_pack () =
   in
   IO.run (Verify.verify ~threads:1 ~map ~oracle ~verbose:ignore t ~matrix);
   Unix.close fd;
-
   let offsets =
     Hashtbl.fold (fun k _ a -> k :: a) where []
     |> List.sort Stdlib.compare
@@ -550,7 +527,6 @@ let verify_bomb_pack () =
   in
   go ();
   close_out oc;
-
   let () =
     let cmd =
       Bos.Cmd.(v "git" % "index-pack" % "-o" % "git-bomb.idx" % "bomb.pack")
@@ -610,29 +586,26 @@ let unpack_bomb_pack () =
     Carton.Dec.make { fd; mx } ~z ~allocate ~uid_ln:Uid.length
       ~uid_rw:Uid.of_raw_string (fun _ -> Alcotest.fail "Invalid call to IDX")
   in
-
   let first_pass () =
     let ic = open_in_bin "bomb.pack" in
     let max, _, _ = (IO.run <.> Us.prj) (Fp.check_header unix unix_read ic) in
     seek_in ic 0;
     let decoder = Fp.decoder ~o:z ~allocate (`Channel ic) in
     let matrix = Array.make max Verify.unresolved_node in
-
     let where = Hashtbl.create 0x10 in
     let children = Hashtbl.create 0x10 in
     let weight = Hashtbl.create 0x10 in
-
     let rec go decoder =
       match Fp.decode decoder with
       | `Await _ | `Peek _ -> assert false
-      | `Entry ({ Fp.kind = Base _; offset; size; _ }, decoder) ->
+      | `Entry ({ Fp.kind= Base _; offset; size; _ }, decoder) ->
           let n = Fp.count decoder - 1 in
           Hashtbl.add weight offset size;
           Hashtbl.add where offset n;
           matrix.(n) <- Verify.unresolved_base ~cursor:offset;
           go decoder
       | `Entry
-          ({ Fp.kind = Ofs { sub = s; source; target; _ }; offset; _ }, decoder)
+          ({ Fp.kind= Ofs { sub= s; source; target; _ }; offset; _ }, decoder)
         ->
           let n = Fp.count decoder - 1 in
           Hashtbl.add weight Int64.(sub offset (Int64.of_int s)) source;
@@ -654,25 +627,24 @@ let unpack_bomb_pack () =
       | `End _ ->
           close_in ic;
           ( {
-              Carton.Dec.digest = digest_like_git;
-              children =
+              Carton.Dec.digest= digest_like_git
+            ; children=
                 (fun ~cursor ~uid ->
                   match
-                    ( Hashtbl.find_opt children (`Ofs cursor),
-                      Hashtbl.find_opt children (`Ref uid) )
+                    ( Hashtbl.find_opt children (`Ofs cursor)
+                    , Hashtbl.find_opt children (`Ref uid) )
                   with
                   | Some a, Some b -> List.sort_uniq compare (a @ b)
                   | Some x, None | None, Some x -> x
-                  | None, None -> []);
-              where = (fun ~cursor -> Hashtbl.find where cursor);
-              weight = (fun ~cursor -> Hashtbl.find weight cursor);
-            },
-            matrix )
+                  | None, None -> [])
+            ; where= (fun ~cursor -> Hashtbl.find where cursor)
+            ; weight= (fun ~cursor -> Hashtbl.find weight cursor)
+            }
+          , matrix )
       | `Malformed err -> Alcotest.fail err
     in
     go decoder
   in
-
   let oracle, matrix = first_pass () in
   IO.run (Verify.verify ~threads:1 ~map ~oracle ~verbose:ignore pack ~matrix);
   Alcotest.(check pass) "verify" () ();
@@ -712,7 +684,6 @@ let pack_bomb_pack () =
     Carton.Dec.make { fd; mx } ~z ~allocate ~uid_ln:Uid.length
       ~uid_rw:Uid.of_raw_string (fun _ -> Alcotest.fail "Invalid call to IDX")
   in
-
   let load uid =
     match Hashtbl.find bomb_index uid with
     | cursor ->
@@ -748,34 +719,28 @@ let pack_bomb_pack () =
     | v -> (Us.inj <.> IO.return) (Some v)
     | exception Not_found -> (Us.inj <.> IO.return) None
   in
-
   let uid =
-    { Carton.Enc.uid_ln = Uid.length; Carton.Enc.uid_rw = Uid.to_raw_string }
+    { Carton.Enc.uid_ln= Uid.length; Carton.Enc.uid_rw= Uid.to_raw_string }
   in
-
   let b =
     {
-      Carton.Enc.o = Bigstringaf.create De.io_buffer_size;
-      Carton.Enc.i = Bigstringaf.create De.io_buffer_size;
-      Carton.Enc.q = De.Queue.create 0x10000;
-      Carton.Enc.w = De.Lz77.make_window ~bits:15;
+      Carton.Enc.o= Bigstringaf.create De.io_buffer_size
+    ; Carton.Enc.i= Bigstringaf.create De.io_buffer_size
+    ; Carton.Enc.q= De.Queue.create 0x10000
+    ; Carton.Enc.w= De.Lz77.make_window ~bits:15
     }
   in
-
   let output_bigstring ctx oc buf ~off ~len =
     let ctx = Uid.feed ctx buf ~off ~len in
     let s = Bigstringaf.substring buf ~off ~len in
     output_string oc s;
     (Us.inj <.> IO.return) ctx
   in
-
   let oc = open_out_bin "new.pack" in
-
   let cursor = ref 12 in
   let iter ctx target =
     let return = unix.Carton.return in
     let ( >>= ) = unix.Carton.bind in
-
     Hashtbl.add offsets (Carton.Enc.target_uid target) !cursor;
     Carton.Enc.encode_target unix ~b ~find ~load ~uid target ~cursor:!cursor
     >>= fun (len, encoder) ->
@@ -795,7 +760,6 @@ let pack_bomb_pack () =
     let encoder = Carton.Enc.N.dst encoder b.o 0 (Bigstringaf.length b.o) in
     go ctx encoder
   in
-
   let fiber ctx =
     let open IO in
     let header = Bigstringaf.create 12 in
@@ -814,7 +778,6 @@ let pack_bomb_pack () =
   let hash = Uid.get ctx in
   output_string oc (Uid.to_raw_string hash);
   close_out oc;
-
   Alcotest.(check pass) "new.pack" () ();
   let res =
     let cmd = Bos.Cmd.(v "git" % "index-pack" % "new.pack") in
@@ -840,52 +803,44 @@ let cycle () =
     Carton.Enc.make_entry ~kind:`A ~length:(Bigstringaf.length b)
       ~delta:(Carton.Enc.From `A) `B
   in
-
   let load = function
     | `A -> (Us.inj <.> IO.return) (Carton.Dec.v ~kind:`A a)
     | `B -> (Us.inj <.> IO.return) (Carton.Dec.v ~kind:`A b)
   in
   let ta = (IO.run <.> Us.prj) (Carton.Enc.entry_to_target unix ~load ea) in
   let tb = (IO.run <.> Us.prj) (Carton.Enc.entry_to_target unix ~load eb) in
-
   let offsets = Hashtbl.create 0x10 in
   let find uid =
     match Hashtbl.find offsets uid with
     | v -> (Us.inj <.> IO.return) (Some v)
     | exception Not_found -> (Us.inj <.> IO.return) None
   in
-
   let uid =
     {
-      Carton.Enc.uid_ln = 1;
-      Carton.Enc.uid_rw = (function `A -> "a" | `B -> "b");
+      Carton.Enc.uid_ln= 1
+    ; Carton.Enc.uid_rw= (function `A -> "a" | `B -> "b")
     }
   in
-
   let b =
     {
-      Carton.Enc.o = Bigstringaf.create De.io_buffer_size;
-      Carton.Enc.i = Bigstringaf.create De.io_buffer_size;
-      Carton.Enc.q = De.Queue.create 0x10000;
-      Carton.Enc.w = De.Lz77.make_window ~bits:15;
+      Carton.Enc.o= Bigstringaf.create De.io_buffer_size
+    ; Carton.Enc.i= Bigstringaf.create De.io_buffer_size
+    ; Carton.Enc.q= De.Queue.create 0x10000
+    ; Carton.Enc.w= De.Lz77.make_window ~bits:15
     }
   in
-
   let ctx = ref Uid.empty in
   let output_bigstring oc buf ~off ~len =
     ctx := Uid.feed !ctx buf ~off ~len;
     let s = Bigstringaf.substring buf ~off ~len in
     output_string oc s
   in
-
   let oc = open_out_bin "cycle.pack" in
   let targets = [| ta; tb |] in
-
   let cursor = ref 12 in
   let iter target =
     let return = unix.Carton.return in
     let ( >>= ) = unix.Carton.bind in
-
     Hashtbl.add offsets (Carton.Enc.target_uid target) !cursor;
     Carton.Enc.encode_target unix ~b ~find ~load ~uid target ~cursor:!cursor
     >>= fun (len, encoder) ->
@@ -903,10 +858,8 @@ let cycle () =
     output_bigstring oc b.o ~off:0 ~len;
     cursor := !cursor + len;
     let encoder = Carton.Enc.N.dst encoder b.o 0 (Bigstringaf.length b.o) in
-    go encoder;
-    return ()
+    go encoder; return ()
   in
-
   let header = Bigstringaf.create 12 in
   Carton.Enc.header_of_pack ~length:(Array.length targets) header 0 12;
   output_bigstring oc header ~off:0 ~len:12;
@@ -923,9 +876,7 @@ let cycle () =
   let hash = Uid.get !ctx in
   output_string oc (Uid.to_raw_string hash);
   close_out oc;
-
   Alcotest.(check pass) "cycle.pack" () ();
-
   let fd = Unix.openfile "cycle.pack" Unix.[ O_RDONLY ] 0o644 in
   let mx =
     let st = Unix.LargeFile.fstat fd in
@@ -937,7 +888,6 @@ let cycle () =
         | "a" -> `A | "b" -> `B | v -> Fmt.invalid_arg "invalid uid: %S" v)
       (fun uid -> Int64.of_int (Hashtbl.find offsets uid))
   in
-
   (* XXX(dinosaure): must fail! *)
   try
     let _ =
@@ -982,9 +932,7 @@ let decode_index_stream () =
         Index_stream_decoder.append device fd (Bytes.sub_string tp 0 len)
         >>= fun () -> go ()
     in
-    Gc.minor ();
-    Gc.full_major ();
-    go ()
+    Gc.minor (); Gc.full_major (); go ()
   in
   match IO.run fiber with
   | Ok () ->
@@ -995,7 +943,6 @@ let decode_index_stream () =
         Unix.map_file ic ~pos:0L Bigarray.char Bigarray.c_layout false [| ln |]
       in
       Unix.close ic;
-
       let payload = Carton.Dec.Idx.Device.project device uid in
       let index0 =
         Carton.Dec.Idx.make
@@ -1034,16 +981,16 @@ let huge_pack () =
   let encoder =
     Idx.encoder `Manual ~pack:(Uid.of_hex "")
       [|
-        {
-          Carton.Dec.Idx.crc = Checkseum.Crc32.default;
-          offset = 0L;
-          uid = Uid.digest "foo";
-        };
-        {
-          Carton.Dec.Idx.crc = Checkseum.Crc32.default;
-          offset = Int64.(add (of_int32 Int32.max_int) 1L);
-          uid = Uid.digest "bar";
-        };
+         {
+           Carton.Dec.Idx.crc= Checkseum.Crc32.default
+         ; offset= 0L
+         ; uid= Uid.digest "foo"
+         }
+       ; {
+           Carton.Dec.Idx.crc= Checkseum.Crc32.default
+         ; offset= Int64.(add (of_int32 Int32.max_int) 1L)
+         ; uid= Uid.digest "bar"
+         }
       |]
   in
   Idx.dst encoder o 0 (Bigstringaf.length o);
@@ -1072,11 +1019,11 @@ let huge_pack () =
 
 let v1_9_0 =
   {
-    Git_version.major = 1;
-    minor = 9;
-    patch = Some "0";
-    revision = None;
-    release_candidate = None;
+    Git_version.major= 1
+  ; minor= 9
+  ; patch= Some "0"
+  ; revision= None
+  ; release_candidate= None
   }
 
 let git_version =
@@ -1101,33 +1048,21 @@ let () =
   in
   let tmp = Rresult.R.failwith_error_msg fiber in
   Bos.OS.Dir.set_default_tmp tmp;
-
   Alcotest.run "carton"
     [
-      "weights", [ weights ];
-      "loads", [ loads ];
-      ( "decoder",
-        [
-          valid_empty_pack ();
-          verify_empty_pack ();
-          check_empty_index ();
-          verify_bomb_pack ();
-          first_entry_of_bomb_pack ();
-          unpack_bomb_pack ();
-          decode_index_stream ();
-          empty_stream ();
-          huge_pack ();
-        ] );
-      ( "encoder",
-        [
-          test_empty_pack ();
-          index_of_empty_pack ();
-          index_of_one_entry ();
-          (* XXX(dinosaure): it seems that a bug exists in Git (not ocaml-git)
+      ("weights", [ weights ]); ("loads", [ loads ])
+    ; ( "decoder"
+      , [
+          valid_empty_pack (); verify_empty_pack (); check_empty_index ()
+        ; verify_bomb_pack (); first_entry_of_bomb_pack (); unpack_bomb_pack ()
+        ; decode_index_stream (); empty_stream (); huge_pack ()
+        ] )
+    ; ( "encoder"
+      , [
+          test_empty_pack (); index_of_empty_pack (); index_of_one_entry ()
+        ; (* XXX(dinosaure): it seems that a bug exists in Git (not ocaml-git)
              on git-index-pack until 1.9.0. *)
           (if Git_version.compare v1_9_0 git_version <= 0 then pack_bomb_pack ()
-           else fake_pack_bomb_pack ());
-          cycle ();
-        ] );
-      "lwt", [ Test_lwt.test_map_yield ];
+           else fake_pack_bomb_pack ()); cycle ()
+        ] ); ("lwt", [ Test_lwt.test_map_yield ])
     ]

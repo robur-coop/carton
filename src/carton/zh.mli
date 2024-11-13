@@ -8,15 +8,15 @@ module N : sig
   val encode : encoder -> ret
 
   val encoder :
-    ?level:int ->
-    i:Zl.bigstring ->
-    q:De.Queue.t ->
-    w:De.Lz77.window ->
-    source:int ->
-    H.bigstring ->
-    dst ->
-    Duff.hunk list ->
-    encoder
+       ?level:int
+    -> i:Zl.bigstring
+    -> q:De.Queue.t
+    -> w:De.Lz77.window
+    -> source:int
+    -> H.bigstring
+    -> dst
+    -> Duff.hunk list
+    -> encoder
 end
 
 module M : sig
@@ -39,9 +39,9 @@ module M : sig
   val decode : decoder -> decode
 
   val decoder :
-    ?source:H.bigstring ->
-    o:Zl.bigstring ->
-    allocate:(int -> Zl.window) ->
-    src ->
-    decoder
+       ?source:H.bigstring
+    -> o:Zl.bigstring
+    -> allocate:(int -> Zl.window)
+    -> src
+    -> decoder
 end

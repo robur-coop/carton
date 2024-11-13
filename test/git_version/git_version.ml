@@ -1,13 +1,13 @@
 type t = {
-  major : int;
-  minor : int;
-  patch : string option;
-  revision : int option;
-  release_candidate : string option;
+    major: int
+  ; minor: int
+  ; patch: string option
+  ; revision: int option
+  ; release_candidate: string option
 }
 
 let pp ppf t =
-  match t.patch, t.revision, t.release_candidate with
+  match (t.patch, t.revision, t.release_candidate) with
   | None, None, None -> Format.fprintf ppf "v%d.%d" t.major t.minor
   | Some p, None, None -> Format.fprintf ppf "v%d.%d.%s" t.major t.minor p
   | Some p, Some rev, None ->
@@ -31,7 +31,7 @@ let compare a b =
 
 let make mj mn patch revision rc =
   let release_candidate = if rc = "" then None else Some rc in
-  Some { major = mj; minor = mn; patch; revision; release_candidate }
+  Some { major= mj; minor= mn; patch; revision; release_candidate }
 
 let parse str =
   try

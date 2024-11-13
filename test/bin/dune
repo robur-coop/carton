@@ -1,0 +1,4 @@
+(cram
+ (package carton-miou-unix)
+ (enabled_if %{arch_sixtyfour})
+ (deps bomb.pack %{bin:carton}))

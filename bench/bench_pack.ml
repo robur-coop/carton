@@ -8,7 +8,7 @@ let bomb_pack = "../test/carton/bomb.pack"
 let bomb_idx = "../test/carton/bomb.idx"
 
 let scheduler =
-  { Carton.bind = (fun x f -> f (prj x)); Carton.return = (fun x -> inj x) }
+  { Carton.bind= (fun x f -> f (prj x)); Carton.return= (fun x -> inj x) }
 
 let map fd ~pos len =
   let { Unix.LargeFile.st_size; _ } = Unix.LargeFile.fstat fd in
@@ -26,26 +26,23 @@ let () = at_exit (fun () -> Unix.close fd)
 
 let index =
   let tbl = Hashtbl.create 0x100 in
-
   let fd = Unix.openfile bomb_idx Unix.[ O_RDONLY ] 0o644 in
   let st = Unix.fstat fd in
   let payload = map fd ~pos:0L st.Unix.st_size in
   Unix.close fd;
-
   let idx =
     Carton.Dec.Idx.make payload ~uid_ln:Digestif.SHA1.digest_size
       ~uid_rw:Digestif.SHA1.to_raw_string ~uid_wr:Digestif.SHA1.of_raw_string
   in
   let f ~uid ~offset ~crc:_ = Hashtbl.add tbl uid offset in
-  Carton.Dec.Idx.iter ~f idx;
-  tbl
+  Carton.Dec.Idx.iter ~f idx; tbl
 
 let z = De.bigstring_create De.io_buffer_size
 let w = De.make_window ~bits:15
 let allocate _ = w
 
 let pack =
-  Carton.Dec.make fd ~z ~allocate ~uid_ln:Digestif.SHA1.digest_size
+  Carton.Dec.make fd ~z ~allocate ~ref_length:Digestif.SHA1.digest_size
     ~uid_rw:Digestif.SHA1.of_raw_string (fun uid -> Hashtbl.find index uid)
 
 let ( >>= ) = scheduler.Carton.bind
@@ -69,13 +66,12 @@ let run fn_load title =
   let _ = fn () in
   let samples_map = Benchmark.run (s 8) fn_map in
   let samples_load = Benchmark.run (s 8) fn_load in
-
   match
     ( Linear_algebra.ols
         (fun m -> m.(1))
         [| (fun m -> m.(0)); (fun _ -> 1.) |]
-        samples_map,
-      Linear_algebra.ols
+        samples_map
+    , Linear_algebra.ols
         (fun m -> m.(1))
         [| (fun m -> m.(0)); (fun _ -> 1.) |]
         samples_load )

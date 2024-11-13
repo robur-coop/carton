@@ -1,13 +1,13 @@
 open Lwt.Infix
 
 module Store = struct
-  type 'a rd = < rd : unit ; .. > as 'a
-  type 'a wr = < wr : unit ; .. > as 'a
+  type 'a rd = < rd: unit ; .. > as 'a
+  type 'a wr = < wr: unit ; .. > as 'a
 
   type 'a mode =
-    | Rd : < rd : unit > mode
-    | Wr : < wr : unit > mode
-    | RdWr : < rd : unit ; wr : unit > mode
+    | Rd : < rd: unit > mode
+    | Wr : < wr: unit > mode
+    | RdWr : < rd: unit ; wr: unit > mode
 
   type t = Fpath.t
   type uid = Fpath.t
@@ -19,15 +19,14 @@ module Store = struct
    fun ppf -> function
     | `Not_found uid -> Fmt.pf ppf "%a not found" Fpath.pp uid
 
-  let create :
-      type a.
+  let create : type a.
       ?trunc:bool -> mode:a mode -> t -> uid -> (a fd, error) result fiber =
    fun ?(trunc = true) ~mode root path ->
     let flags, perm =
       match mode with
-      | Rd -> Unix.[ O_RDONLY ], 0o400
-      | Wr -> Unix.[ O_WRONLY; O_CREAT; O_APPEND ], 0o600
-      | RdWr -> Unix.[ O_RDWR; O_CREAT; O_APPEND ], 0o600
+      | Rd -> (Unix.[ O_RDONLY ], 0o400)
+      | Wr -> (Unix.[ O_WRONLY; O_CREAT; O_APPEND ], 0o600)
+      | RdWr -> (Unix.[ O_RDWR; O_CREAT; O_APPEND ], 0o600)
     in
     let flags = if trunc then Unix.O_TRUNC :: flags else flags in
     let path = Fpath.(root // path) in
