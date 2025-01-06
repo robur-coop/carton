@@ -3,10 +3,7 @@ module Us = Carton.Make (struct
 end)
 
 let unix =
-  {
-    Carton.bind = (fun x f -> f (Us.prj x));
-    Carton.return = (fun x -> Us.inj x);
-  }
+  { Carton.bind= (fun x f -> f (Us.prj x)); Carton.return= (fun x -> Us.inj x) }
 
 let z = Bigstringaf.create De.io_buffer_size
 let allocate bits = De.make_window ~bits
@@ -33,11 +30,7 @@ let () =
   in
   let kind, length, _pos, _slice =
     Carton.Dec.header_of_entry ~map t pos
-      {
-        Carton.Dec.W.payload;
-        offset = pos;
-        length = Bigstringaf.length payload;
-      }
+      { Carton.Dec.W.payload; offset= pos; length= Bigstringaf.length payload }
   in
   ignore @@ (kind, length)
 
@@ -56,7 +49,7 @@ let () =
   in
   let kind', length', _pos, _slice =
     Carton.Dec.header_of_entry ~map t 0L
-      { Carton.Dec.W.payload; offset = 0L; length = Bigstringaf.length payload }
+      { Carton.Dec.W.payload; offset= 0L; length= Bigstringaf.length payload }
   in
   Crowbar.check_eq ~pp:Fmt.int kind kind';
   Crowbar.check_eq ~pp:Fmt.int length length'

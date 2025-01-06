@@ -1,4 +1,4 @@
-type fd = { fd : Unix.file_descr; mx : int64 }
+type fd = { fd: Unix.file_descr; mx: int64 }
 
 let unix_map : fd Carton.Dec.W.map =
  fun fd ~pos len ->
@@ -17,9 +17,9 @@ module IO = struct
 
   module Ivar = struct
     type 'a state = Full of 'a | Empty of ('a -> unit) Queue.t
-    type 'a t = { mutable state : 'a state }
+    type 'a t = { mutable state: 'a state }
 
-    let create () = { state = Empty (Queue.create ()) }
+    let create () = { state= Empty (Queue.create ()) }
 
     let fill t x =
       match t.state with
@@ -42,28 +42,28 @@ module IO = struct
     k ivar
 
   type tpool = {
-    seq : seq;
-    work_mutex : Mutex.t;
-    work_cond : Condition.t;
-    working_cond : Condition.t;
-    mutable working_cnt : int;
-    mutable thread_cnt : int;
-    mutable stop : bool;
+      seq: seq
+    ; work_mutex: Mutex.t
+    ; work_cond: Condition.t
+    ; working_cond: Condition.t
+    ; mutable working_cnt: int
+    ; mutable thread_cnt: int
+    ; mutable stop: bool
   }
 
-  and seq = { mutable prev : seq; mutable next : seq }
+  and seq = { mutable prev: seq; mutable next: seq }
 
   let make_seq () =
-    let rec seq = { prev = seq; next = seq } in
+    let rec seq = { prev= seq; next= seq } in
     seq
 
   type prgn = Prgn : ('a -> unit) * 'a -> prgn
 
   type node = {
-    mutable node_prev : seq;
-    mutable node_next : seq;
-    prgn : prgn;
-    mutable active : bool;
+      mutable node_prev: seq
+    ; mutable node_next: seq
+    ; prgn: prgn
+    ; mutable active: bool
   }
 
   external node_of_seq : seq -> node = "%identity"
@@ -81,8 +81,7 @@ module IO = struct
         Condition.wait tm.working_cond tm.work_mutex;
         loop ())
     in
-    loop ();
-    Mutex.unlock tm.work_mutex
+    loop (); Mutex.unlock tm.work_mutex
 
   let remove node =
     if node.active then (
@@ -95,8 +94,7 @@ module IO = struct
     if is_empty tm then None
     else
       let res = node_of_seq tm.seq.next in
-      remove res;
-      Some res.prgn
+      remove res; Some res.prgn
 
   let worker tm =
     let rec loop () =
@@ -126,13 +124,13 @@ module IO = struct
   let make () =
     let tm =
       {
-        working_cnt = 0;
-        thread_cnt = !concurrency;
-        stop = false;
-        work_mutex = Mutex.create ();
-        work_cond = Condition.create ();
-        working_cond = Condition.create ();
-        seq = make_seq ();
+        working_cnt= 0
+      ; thread_cnt= !concurrency
+      ; stop= false
+      ; work_mutex= Mutex.create ()
+      ; work_cond= Condition.create ()
+      ; working_cond= Condition.create ()
+      ; seq= make_seq ()
       }
     in
     for _ = 0 to !concurrency - 1 do
@@ -162,7 +160,7 @@ module IO = struct
   let add tm prgn =
     Mutex.lock tm.work_mutex;
     let node =
-      { node_prev = tm.seq.prev; node_next = tm.seq; prgn; active = true }
+      { node_prev= tm.seq.prev; node_next= tm.seq; prgn; active= true }
     in
     tm.seq.prev.next <- seq_of_node node;
     tm.seq.prev <- seq_of_node node;
@@ -175,11 +173,7 @@ module IO = struct
     let result = ref None in
     fiber (fun x -> result := Some x);
     wait tm;
-    match !result with
-    | Some x ->
-        reset tm;
-        x
-    | None -> failwith "IO.run"
+    match !result with Some x -> reset tm; x | None -> failwith "IO.run"
 
   module Mutex = struct
     type 'a fiber = 'a t
@@ -188,10 +182,8 @@ module IO = struct
 
     let lock : Mutex.t -> unit t =
      fun t ->
-      fork (fun () ->
-          Mutex.lock t;
-          return ())
-      >>= fun future -> Future.wait future
+      fork (fun () -> Mutex.lock t; return ()) >>= fun future ->
+      Future.wait future
 
     let unlock t = Mutex.unlock t
 
@@ -206,10 +198,8 @@ module IO = struct
     let create () = Condition.create ()
 
     let wait mutex t =
-      fork (fun () ->
-          Condition.wait mutex t;
-          return ())
-      >>= fun future -> Future.wait future
+      fork (fun () -> Condition.wait mutex t; return ()) >>= fun future ->
+      Future.wait future
 
     let signal t = Condition.signal t
     let broadcast t = Condition.broadcast t
@@ -246,8 +236,8 @@ let unix =
   let open IO in
   let open Us in
   {
-    Carton.bind = (fun x f -> inj (bind (prj x) (fun x -> prj (f x))));
-    Carton.return = (fun x -> inj (return x));
+    Carton.bind= (fun x f -> inj (bind (prj x) (fun x -> prj (f x))))
+  ; Carton.return= (fun x -> inj (return x))
   }
 
 let unix_read : (in_channel, Us.t) Carton.Dec.read =

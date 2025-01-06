@@ -16,7 +16,6 @@ let create ?(trunc = true) root path =
     | false -> Unix.[ O_RDWR; O_APPEND; O_CREAT ]
     | true -> Unix.[ O_RDWR; O_APPEND; O_CREAT; O_TRUNC ]
   in
-
   let rec process () =
     Lwt_unix.openfile (Fpath.to_string path) flags 0o644 >>= fun fd ->
     Lwt.return_ok fd
@@ -53,7 +52,7 @@ let close _ fd =
 
 module Thin = Carton_lwt.Thin.Make (Uid)
 
-let access = { Thin.create; Thin.append; Thin.map = yield_map; Thin.close }
+let access = { Thin.create; Thin.append; Thin.map= yield_map; Thin.close }
 
 let safely_open path =
   let rec process () =
@@ -96,7 +95,6 @@ let digest ~kind ?(off = 0) ?len buf =
     match len with Some len -> len | None -> Bigstringaf.length buf - off
   in
   let ctx = Digestif.SHA1.empty in
-
   let ctx =
     match kind with
     | `A -> Digestif.SHA1.feed_string ctx (Fmt.str "commit %d\000" len)
@@ -112,7 +110,6 @@ let test_map_yield =
   let root = Fpath.v "."
   and pack0 = Fpath.v "bomb.pack"
   and pack1 = Fpath.v "check.pack" in
-
   let fiber =
     stream_of_file pack0 >>= Thin.verify ~threads:4 ~digest root pack1 access
   in

@@ -1,8 +1,7 @@
 opam-version: "2.0"
-name: "carton-lwt"
-synopsis: "Implementation of PACK file in OCaml"
-description: """\
-Carton is an implementation of the PACK file
+name: "carton-miou-unix"
+synopsis: "Implementation of PACK file in OCaml for Miou"
+description: """Carton is an implementation of the PACK file
 in OCaml. PACK file is used by Git to store Git objects. Carton is more
 abstracted when it can store any objects."""
 maintainer: "Romain Calascibetta <romain.calascibetta@gmail.com>"
@@ -12,14 +11,18 @@ homepage: "https://git.robur.coop/robur/carton"
 doc: "https://robur-coop.github.io/carton/"
 bug-reports: "https://git.robur.coop/robur/carton/issues"
 depends: [
-  "ocaml" {>= "4.08.0"}
+  "ocaml" {>= "5.0.0"}
   "dune" {>= "3.11.0"}
   "carton" {= version}
-  "cachet-lwt"
-  "alcotest-lwt" {>= "1.8.0" & with-test}
-  "digestif" {>= "1.2.0" &  with-test}
+  "fmt"
+  "hxd"
+  "logs" {>= "0.7.0"}
+  "fpath"
+  "miou"
+  "digestif"
+  "progress"
+  "cmdliner" {>= "1.3.0"}
 ]
-conflicts: [ "result" {< "1.5"} ]
 build: [
   ["dune" "subst"] {dev}
   ["dune" "build" "-p" name "-j" jobs]
@@ -28,5 +31,5 @@ build: [
 dev-repo: "git+https://github.com/robur-coop/carton.git"
 
 pin-depends: [
-  [ "cachet-lwt.dev" "git+https://github.com/robur-coop/cachet.git#6bef912ee7f5e9919f65dbfc04dc3433bcfc2cc3" ]
+  [ "miou.dev" "git+https://github.com/robur-coop/miou.git#01b75212e595d154a0f24387e0fdde8cf86254f2" ]
 ]

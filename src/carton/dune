@@ -1,29 +1,28 @@
 (library
  (name carton)
- (modules carton dec enc h idx sigs zh)
+ (modules carton h zh)
  (public_name carton)
+ (wrapped false)
  (libraries
-  ke
+  ohex
+  cachet
   duff
   optint
   checkseum
   decompress.de
   decompress.zl
-  bigstringaf
-  psq
-  fmt))
+  logs))
 
 (library
- (name thin)
- (modules thin)
- (public_name carton.thin)
- (libraries
-  optint
-  checkseum
-  decompress.de
-  decompress.zl
-  bigstringaf
-  logs
-  carton
-  cstruct
-  ke))
+ (name classeur)
+ (modules classeur)
+ (public_name carton.classeur)
+ (wrapped false)
+ (libraries ohex carton))
+
+(library
+ (name cartonnage)
+ (modules cartonnage)
+ (public_name carton.cartonnage)
+ (wrapped false)
+ (libraries carton))

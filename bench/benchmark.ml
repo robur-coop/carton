@@ -30,25 +30,17 @@ let run quota t =
   let idx = ref 0 in
   let run = ref 0 in
   let (V fn) = t in
-
   let m = Array.create_float (samples * 2) in
-
   stabilize_garbage_collector ();
   let init_time = Mtime.of_uint64_ns (now ()) in
-
   while (not (exceeded_allowed_time quota init_time)) && !idx < samples do
     let current_run = !run in
     let current_idx = !idx in
-
     let time_0 = now () in
-
     runnable fn current_run;
-
     let time_1 = now () in
-
     m.((current_idx * 2) + 0) <- float_of_int current_run;
     m.((current_idx * 2) + 1) <- Int64.to_float (Int64.sub time_1 time_0);
-
     let next =
       (max : int -> int -> int)
         (int_of_float (float_of_int current_run *. 1.01))
@@ -57,5 +49,4 @@ let run quota t =
     run := next;
     incr idx
   done;
-
   Array.init samples (fun i -> [| m.((i * 2) + 0); m.((i * 2) + 1) |])

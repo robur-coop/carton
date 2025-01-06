@@ -1,0 +1,5 @@
+(test
+ (name test)
+ (deps bomb.pack)
+ (enabled_if %{arch_sixtyfour})
+ (libraries digestif alcotest-lwt carton-lwt))

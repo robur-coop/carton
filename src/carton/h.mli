@@ -4,6 +4,7 @@ type bigstring =
 val io_buffer_size : int
 val bigstring_create : int -> bigstring
 val bigstring_empty : bigstring
+val input_bigstring : in_channel -> bigstring -> int -> int -> int
 
 module M : sig
   type src = [ `Channel of in_channel | `Manual | `String of string ]
@@ -19,6 +20,27 @@ module M : sig
   val dst_len : decoder -> int
   val decode : decoder -> decode
   val decoder : ?source:bigstring -> src -> decoder
+end
+
+module R : sig
+  type src = [ `Channel of in_channel | `Manual | `String of string ]
+
+  type decode =
+    [ `Await
+    | `Header of int * int
+    | `Copy of int * int
+    | `Insert of string
+    | `End
+    | `Malformed of string ]
+
+  type decoder
+
+  val src : decoder -> bigstring -> int -> int -> unit
+  val src_rem : decoder -> int
+  val src_len : decoder -> int
+  val dst_len : decoder -> int
+  val decode : decoder -> decode
+  val decoder : src -> decoder
 end
 
 module N : sig

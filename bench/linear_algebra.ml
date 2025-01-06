@@ -17,7 +17,7 @@ let col_inner_prod t j1 j2 =
 
 let qr_in_place a =
   let m = Array.length a in
-  if m = 0 then [||], [||]
+  if m = 0 then ([||], [||])
   else
     let n = Array.length a.(0) in
     let r = Array.make_matrix n n 0. in
@@ -36,7 +36,7 @@ let qr_in_place a =
         done
       done
     done;
-    a, r
+    (a, r)
 
 let qr ?(in_place = false) a =
   let a = if in_place then a else Array.map Array.copy a in
@@ -50,17 +50,17 @@ let mul_mv ?(trans = false) a x =
     let m, n, get =
       if trans then
         let get i j = a.(j).(i) in
-        cols, rows, get
+        (cols, rows, get)
       else
         let get i j = a.(i).(j) in
-        rows, cols, get
+        (rows, cols, get)
     in
     if n <> Array.length x then failwith "Dimension mismatch";
     let result = Array.make m 0. in
     for i = 0 to m - 1 do
       let v, _ =
         Array.fold_left
-          (fun (acc, j) x -> acc +. (get i j *. x), succ j)
+          (fun (acc, j) x -> (acc +. (get i j *. x), succ j))
           (0., 0) x
       in
       result.(i) <- v
@@ -95,8 +95,8 @@ let ols ?(in_place = false) a b =
 
 let make_lr_inputs responder predictors m =
   ( Array.init (Array.length m) (fun i ->
-        Array.map (fun a -> a m.(i)) predictors),
-    Array.init (Array.length m) (fun i -> responder m.(i)) )
+        Array.map (fun a -> a m.(i)) predictors)
+  , Array.init (Array.length m) (fun i -> responder m.(i)) )
 
 let r_square m responder predictors r =
   let predictors_matrix, responder_vector =

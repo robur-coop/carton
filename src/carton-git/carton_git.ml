@@ -1,11 +1,11 @@
 module type STORE = sig
-  type 'a rd = < rd : unit ; .. > as 'a
-  type 'a wr = < wr : unit ; .. > as 'a
+  type 'a rd = < rd: unit ; .. > as 'a
+  type 'a wr = < wr: unit ; .. > as 'a
 
   type 'a mode =
-    | Rd : < rd : unit > mode
-    | Wr : < wr : unit > mode
-    | RdWr : < rd : unit ; wr : unit > mode
+    | Rd : < rd: unit > mode
+    | Wr : < wr: unit > mode
+    | RdWr : < rd: unit ; wr: unit > mode
 
   type t
   type uid
@@ -37,19 +37,19 @@ module type IO = sig
 end
 
 type ('fd, 'uid) pack = {
-  pack : ('fd * int64, 'uid) Carton.Dec.t;
-  index : 'uid Carton.Dec.Idx.idx;
-  z : Bigstringaf.t;
-  w : De.window;
+    pack: ('fd * int64, 'uid) Carton.Dec.t
+  ; index: 'uid Carton.Dec.Idx.idx
+  ; z: Bigstringaf.t
+  ; w: De.window
 }
 
-type ('path, 'fd, 'uid) t = { tbl : ('path, ('fd, 'uid) pack) Hashtbl.t }
+type ('path, 'fd, 'uid) t = { tbl: ('path, ('fd, 'uid) pack) Hashtbl.t }
 [@@unbox]
 
 type 'fd buffers = {
-  z : Bigstringaf.t;
-  allocate : int -> De.window;
-  w : 'fd Carton.Dec.W.t;
+    z: Bigstringaf.t
+  ; allocate: int -> De.window
+  ; w: 'fd Carton.Dec.W.t
 }
 
 module Make
@@ -105,10 +105,10 @@ struct
   (* XXX(dinosaure): about design, I think that a listing of PACK files should be done
      outside the scope of this module (or more generally outside the scope of the Git's core). *)
   let make :
-      Store.t ->
-      uid_of_major_uid:(Store.uid -> 'uid) ->
-      idx_major_uid_of_uid:(Store.t -> 'uid -> Store.uid) ->
-      (Store.uid, < rd : unit > Store.fd, Uid.t) t IO.t =
+         Store.t
+      -> uid_of_major_uid:(Store.uid -> 'uid)
+      -> idx_major_uid_of_uid:(Store.t -> 'uid -> Store.uid)
+      -> (Store.uid, < rd: unit > Store.fd, Uid.t) t IO.t =
    fun root ~uid_of_major_uid ~idx_major_uid_of_uid ->
     Store.list root >>= fun pcks ->
     let idxs = List.map (idx_major_uid_of_uid root <.> uid_of_major_uid) pcks in
@@ -126,11 +126,11 @@ struct
     Store.map root fd ~pos len
 
   let add :
-      Store.t ->
-      (Store.uid, < rd : unit > Store.fd, Uid.t) t ->
-      idx:Store.uid ->
-      Store.uid ->
-      (< rd : unit > Store.fd * int64, Store.error) result IO.t =
+         Store.t
+      -> (Store.uid, < rd: unit > Store.fd, Uid.t) t
+      -> idx:Store.uid
+      -> Store.uid
+      -> (< rd: unit > Store.fd * int64, Store.error) result IO.t =
    fun root p ~idx:idx_uid pck ->
     idx root [] idx_uid >>? fun idxs ->
     let[@warning "-8"] [ idx ] = idxs in
@@ -157,11 +157,11 @@ struct
         raise exn)
 
   let get :
-      Store.t ->
-      resources:('fd -> ('fd buffers -> 'a IO.t) -> 'a IO.t) ->
-      (Store.uid, < rd : unit > Store.fd, Uid.t) t ->
-      Uid.t ->
-      (Carton.Dec.v, [> `Msg of string ]) result IO.t =
+         Store.t
+      -> resources:('fd -> ('fd buffers -> 'a IO.t) -> 'a IO.t)
+      -> (Store.uid, < rd: unit > Store.fd, Uid.t) t
+      -> Uid.t
+      -> (Carton.Dec.v, [> `Msg of string ]) result IO.t =
    fun root ~resources p uid ->
     let res = ref None in
     Hashtbl.iter

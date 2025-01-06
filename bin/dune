@@ -1,0 +1,90 @@
+; (library
+;  (name args)
+;  (public_name carton.args)
+;  (modules args)
+;  (libraries
+;   fmt.cli
+;   fmt.tty
+;   logs.cli
+;   logs.fmt
+;   logs.threaded
+;   hxd.core
+;   fpath
+;   fmt
+;   cmdliner
+;   digestif
+;   carton
+;   carton-miou-unix))
+; 
+; (executable
+;  (name list)
+;  (public_name carton.list)
+;  (package carton-miou-unix)
+;  (modules list)
+;  (libraries cmdliner ohex fmt digestif carton.args))
+; 
+; (executable
+;  (name get)
+;  (public_name carton.get)
+;  (package carton-miou-unix)
+;  (modules get)
+;  (libraries hxd.string ohex cmdliner fpath fmt digestif carton.args))
+; 
+; (executable
+;  (name verify)
+;  (public_name carton.verify)
+;  (package carton-miou-unix)
+;  (modules verify)
+;  (libraries cmdliner ohex fmt digestif carton.args))
+; 
+; (executable
+;  (name index)
+;  (public_name carton.index)
+;  (package carton-miou-unix)
+;  (modules index)
+;  (libraries cmdliner fmt digestif carton.args))
+; 
+; (executable
+;  (name diff)
+;  (public_name carton.diff)
+;  (package carton-miou-unix)
+;  (modules diff)
+;  (libraries cmdliner carton.args))
+; 
+; (executable
+;  (name apply)
+;  (public_name carton.apply)
+;  (package carton-miou-unix)
+;  (modules apply)
+;  (libraries bigstringaf hxd.string cmdliner carton.args))
+; 
+; (executable
+;  (name make)
+;  (public_name carton.make)
+;  (package carton-miou-unix)
+;  (modules make)
+;  (libraries carton.args))
+; 
+; (executable
+;  (name explode)
+;  (public_name carton.explode)
+;  (package carton-miou-unix)
+;  (modules explode)
+;  (libraries carton.args))
+
+(executable
+ (name pack)
+ (public_name carton)
+ (package carton-miou-unix)
+ (enabled_if %{arch_sixtyfour})
+ (libraries
+  logs.cli
+  logs.fmt
+  logs.threaded
+  fmt
+  fmt.cli
+  fmt.tty
+  digestif
+  cmdliner
+  progress
+  carton-miou-unix))
