@@ -5,6 +5,7 @@
   (language c)
   (names pagesize))
  (libraries
+  fmt
   hxd.string
   fpath
   miou.unix

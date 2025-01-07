@@ -187,6 +187,11 @@ let bigstring_copy bstr =
 
 type base = { value: Carton.Value.t; uid: Carton.Uid.t; depth: int }
 
+let identify (Carton.Identify gen) ~kind ~len bstr =
+  let ctx = gen.Carton.First_pass.init kind (Carton.Size.of_int_exn len) in
+  let ctx = gen.Carton.First_pass.feed (Bigarray.Array1.sub bstr 0 len) ctx in
+  gen.Carton.First_pass.serialize ctx
+
 let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
   | [||] -> Lwt.return_unit
   | [| cursor |] ->
@@ -195,7 +200,7 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
       let len = Carton.Value.length value
       and bstr = Carton.Value.bigstring value
       and kind = Carton.Value.kind value in
-      let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+      let uid = identify oracle.Carton.identify ~kind ~len bstr
       and pos = oracle.where ~cursor
       and crc = oracle.checksum ~cursor
       and depth = succ base.depth in
@@ -223,7 +228,7 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
           let len = Carton.Value.length value
           and bstr = Carton.Value.bigstring value
           and kind = Carton.Value.kind value in
-          let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+          let uid = identify oracle.Carton.identify ~kind ~len bstr
           and pos = oracle.where ~cursor
           and crc = oracle.checksum ~cursor
           and depth = succ base.depth in
@@ -275,7 +280,7 @@ let verify ?(threads = 4) ?(on = ignore3) t oracle matrix =
       let len = Carton.Value.length value
       and bstr = Carton.Value.bigstring value
       and kind = Carton.Value.kind value in
-      let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+      let uid = identify oracle.Carton.identify ~kind ~len bstr
       and crc = oracle.checksum ~cursor in
       on value uid >>= fun () ->
       matrix.(pos) <- Resolved_base { cursor; uid; crc; kind };
@@ -387,6 +392,7 @@ type ctx = {
   ; allocate: int -> De.window
   ; ref_length: int
   ; digest: Carton.First_pass.digest
+  ; identify: Carton.identify
 }
 
 let of_stream_to_store ctx ~append stream =
@@ -460,8 +466,17 @@ let of_stream_to_store ctx ~append stream =
     | `End hash -> Lwt.return (Lwt_seq.Cons (`Hash hash, Lwt_seq.empty))
   in
   let decoder =
-    let { output; allocate; ref_length; digest } = ctx in
-    Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest `Manual
+    let {
+      output
+    ; allocate
+    ; ref_length
+    ; digest
+    ; identify= Carton.Identify identify
+    } =
+      ctx
+    in
+    Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest ~identify
+      `Manual
   in
   go decoder (String.empty, 0, 0)
 
@@ -478,7 +493,7 @@ let verify_from_stream
   let z = De.bigstring_create De.io_buffer_size in
   let seq =
     let allocate bits = De.make_window ~bits in
-    let ctx = { output= z; allocate; ref_length; digest } in
+    let ctx = { output= z; allocate; ref_length; digest; identify } in
     of_stream_to_store ctx ~append stream
   in
   let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in

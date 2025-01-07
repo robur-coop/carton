@@ -5,7 +5,7 @@ module Log = (val Logs.src_log src : Logs.LOG)
 external getpagesize : unit -> int = "carton_miou_unix_getpagesize" [@@noalloc]
 
 let failwithf fmt = Format.kasprintf failwith fmt
-let ignore3 _ _ = ()
+let ignore3 ~cursor:_ _ _ = ()
 let ignorem ~max:_ _ = ()
 
 let bigstring_copy bstr =
@@ -71,7 +71,7 @@ type config = {
   ; ref_length: int
   ; identify: Carton.identify
   ; on_entry: max:int -> entry -> unit
-  ; on_object: Carton.Value.t -> Carton.Uid.t -> unit
+  ; on_object: cursor:int -> Carton.Value.t -> Carton.Uid.t -> unit
 }
 
 let _min_threads = Int.min 4 (Stdlib.Domain.recommended_domain_count ())
@@ -92,6 +92,11 @@ type base = { value: Carton.Value.t; uid: Carton.Uid.t; depth: int }
 
 (** the core of the verification *)
 
+let identify (Carton.Identify gen) ~kind ~len bstr =
+  let ctx = gen.Carton.First_pass.init kind (Carton.Size.of_int_exn len) in
+  let ctx = gen.Carton.First_pass.feed (Bigarray.Array1.sub bstr 0 len) ctx in
+  gen.Carton.First_pass.serialize ctx
+
 let rec resolve_tree ?(on = ignore3) t oracle matrix ~base = function
   | [||] -> ()
   | [| cursor |] ->
@@ -103,11 +108,11 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~base = function
       let len = Carton.Value.length value
       and bstr = Carton.Value.bigstring value
       and kind = Carton.Value.kind value in
-      let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+      let uid = identify oracle.Carton.identify ~kind ~len bstr
       and pos = oracle.where ~cursor
       and crc = oracle.checksum ~cursor
       and depth = succ base.depth in
-      on value uid;
+      on ~cursor value uid;
       matrix.(pos) <-
         Carton.Resolved_node { cursor; uid; crc; kind; depth; parent= base.uid };
       let children = oracle.children ~cursor ~uid in
@@ -131,11 +136,11 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~base = function
           let len = Carton.Value.length value
           and bstr = Carton.Value.bigstring value
           and kind = Carton.Value.kind value in
-          let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+          let uid = identify oracle.Carton.identify ~kind ~len bstr
           and pos = oracle.where ~cursor
           and crc = oracle.checksum ~cursor
           and depth = succ base.depth in
-          on value uid;
+          on ~cursor value uid;
           matrix.(pos) <-
             Resolved_node { cursor; uid; crc; kind; depth; parent= base.uid };
           let children = oracle.children ~cursor ~uid in
@@ -179,9 +184,9 @@ let verify ?(threads = 4) ?(on = ignore3) t oracle matrix =
       let len = Carton.Value.length value
       and bstr = Carton.Value.bigstring value
       and kind = Carton.Value.kind value in
-      let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+      let uid = identify oracle.Carton.identify ~kind ~len bstr
       and crc = oracle.checksum ~cursor in
-      on value uid;
+      on ~cursor value uid;
       matrix.(pos) <- Resolved_base { cursor; uid; crc; kind };
       let children = oracle.children ~cursor ~uid in
       let children = Array.of_list children in
@@ -210,24 +215,40 @@ let seq_of_filename filename =
 (** compile metadatas from pack file *)
 
 let compile ?(on = ignorem) ~identify ~digest_length seq =
-  let children = Hashtbl.create 0x7ff in
+  let children_by_offset = Hashtbl.create 0x7ff in
+  let children_by_uid : (Carton.Uid.t, int list) Hashtbl.t =
+    Hashtbl.create 0x7ff
+  in
   let sizes : (int, Carton.Size.t ref) Hashtbl.t = Hashtbl.create 0x7ff in
   let where = Hashtbl.create 0x7ff in
   let crcs = Hashtbl.create 0x7ff in
   let is_base = Hashtbl.create 0x7ff in
+  let index = Hashtbl.create 0x7ff in
+  let ref_index = Hashtbl.create 0x7ff in
   let is_thin = ref false in
   let hash = ref (String.make digest_length '\000') in
-  let update_size ~parent offset ~source ~target =
+  let update_size ~parent offset (size : Carton.Size.t) =
     Log.debug (fun m ->
-        m "Update the size for %08x (parent: %08x)" offset parent);
+        m "Update the size of %08x (parent: %08x) to %d byte(s)" offset parent
+          (size :> int));
     let cell : Carton.Size.t ref = Hashtbl.find sizes parent in
-    (cell := Carton.Size.(max !cell (max source target)));
-    Hashtbl.add sizes offset cell
+    (cell := Carton.Size.(max !cell size));
+    Hashtbl.replace sizes offset cell
   in
   let new_child ~parent child =
-    match Hashtbl.find_opt children parent with
-    | None -> Hashtbl.add children parent [ child ]
-    | Some offsets -> Hashtbl.replace children parent (child :: offsets)
+    match parent with
+    | `Ofs parent -> begin
+        match Hashtbl.find_opt children_by_offset parent with
+        | None -> Hashtbl.add children_by_offset parent [ child ]
+        | Some offsets ->
+            Hashtbl.replace children_by_offset parent (child :: offsets)
+      end
+    | `Ref parent -> begin
+        match Hashtbl.find_opt children_by_uid parent with
+        | None -> Hashtbl.add children_by_uid parent [ child ]
+        | Some offsets ->
+            Hashtbl.replace children_by_uid parent (child :: offsets)
+      end
   in
   let number_of_objects = ref 0 in
   let fn pos = function
@@ -243,26 +264,60 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         Hashtbl.add where offset pos;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
-        | Carton.First_pass.Base _ ->
+        | Carton.First_pass.Base (_, uid) ->
             Hashtbl.add sizes offset (ref size);
-            Hashtbl.add is_base pos offset
+            Hashtbl.add is_base pos offset;
+            Hashtbl.add index uid offset
         | Ofs { sub; source; target } ->
             Log.debug (fun m ->
                 m "new OBJ_OFS object at %08x (rel: %08x)" offset sub);
             let abs_parent = offset - sub in
-            update_size ~parent:abs_parent offset ~source ~target;
+            update_size ~parent:abs_parent offset
+              (Carton.Size.max target source);
             Log.debug (fun m ->
                 m "new child for %08x at %08x" abs_parent offset);
-            new_child ~parent:abs_parent offset
-        | Ref { target; _ } ->
-            is_thin := true;
-            Hashtbl.add sizes offset (ref target)
+            new_child ~parent:(`Ofs abs_parent) offset
+        | Ref { ptr; source; target; _ } ->
+            Log.debug (fun m ->
+                m
+                  "new OBJ_REF object at %08x (ptr: %a) (source: %d, target: \
+                   %d)"
+                  offset Carton.Uid.pp ptr
+                  (source :> int)
+                  (target :> int));
+            begin
+              match Hashtbl.find_opt index ptr with
+              | Some parent ->
+                  update_size ~parent offset (Carton.Size.max source target)
+              | None ->
+                  Hashtbl.add sizes offset (ref (Carton.Size.max source target))
+            end;
+            Hashtbl.add ref_index offset ptr;
+            new_child ~parent:(`Ref ptr) offset
       end
   in
   Seq.iteri fn seq;
+  Hashtbl.iter
+    (fun offset ptr ->
+      match Hashtbl.find_opt index ptr with
+      | Some parent ->
+          Log.debug (fun m ->
+              m "Update the size of %08x (parent: %08x, %a)" offset parent
+                Carton.Uid.pp ptr);
+          update_size ~parent offset !(Hashtbl.find sizes offset)
+      | None -> ())
+    ref_index;
   Log.debug (fun m -> m "%d object(s)" !number_of_objects);
-  let children ~cursor ~uid:_ =
-    Option.value ~default:[] (Hashtbl.find_opt children cursor)
+  let children ~cursor ~uid =
+    match
+      ( Hashtbl.find_opt children_by_offset cursor
+      , Hashtbl.find_opt children_by_uid uid )
+    with
+    | Some (_ :: _ as children), (Some [] | None) -> children
+    | (Some [] | None), Some (_ :: _ as children) -> children
+    | (None | Some []), (None | Some []) -> []
+    | Some lst0, Some lst1 ->
+        List.(sort_uniq Int.compare (rev_append lst0 lst1))
   in
   let where ~cursor = Hashtbl.find where cursor in
   let size ~cursor = !(Hashtbl.find sizes cursor) in
@@ -287,7 +342,7 @@ let verify_from_pack
       ; pagesize
       ; cachesize
       ; ref_length
-      ; identify
+      ; identify= Carton.Identify gen as identify
       ; on_entry
       ; on_object
       } ~digest filename =
@@ -296,7 +351,8 @@ let verify_from_pack
   let seq =
     let window = De.make_window ~bits:15 in
     let allocate _bits = window in
-    Carton.First_pass.of_seq ~output:z ~allocate ~ref_length ~digest seq
+    Carton.First_pass.of_seq ~output:z ~allocate ~ref_length ~digest
+      ~identify:gen seq
   in
   let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in
   let oracle = compile ~on:on_entry ~identify ~digest_length seq in
@@ -319,17 +375,22 @@ type delta = { source: Carton.Uid.t; depth: int; raw: Cachet.Bstr.t }
 
 let entries_of_pack ~cfg ~digest filename =
   let raw = Hashtbl.create 0x7ff in
+  let (Identify gen) = cfg.identify in
   let z = De.bigstring_create De.io_buffer_size in
   let t =
     make ?pagesize:cfg.pagesize ?cachesize:cfg.cachesize ~z
       ~ref_length:cfg.ref_length filename
   in
-  let fd, _ = Carton.fd t in
-  let finally () = Unix.close fd in
+  let _fd, _ = Carton.fd t in
+  let finally () = (* Unix.close fd *) () in
   Fun.protect ~finally @@ fun () ->
   let on ~max:_ entry =
-    let cursor = entry.offset in
-    let bstr = Carton.map t ~cursor in
+    let cursor = entry.offset and consumed = entry.consumed in
+    let bstr = Carton.map t ~cursor ~consumed in
+    Log.debug (fun m ->
+        m "%08x: @[<hov>%a@]" cursor
+          (Hxd_string.pp Hxd.default)
+          (Cachet.Bstr.to_string bstr));
     Hashtbl.add raw cursor bstr
   in
   let seq = seq_of_filename filename in
@@ -337,7 +398,7 @@ let entries_of_pack ~cfg ~digest filename =
     let window = De.make_window ~bits:15 in
     let allocate _bits = window in
     Carton.First_pass.of_seq ~output:z ~allocate ~ref_length:cfg.ref_length
-      ~digest seq
+      ~digest ~identify:gen seq
   in
   let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in
   let oracle = compile ~on ~identify:cfg.identify ~digest_length seq in
@@ -347,7 +408,11 @@ let entries_of_pack ~cfg ~digest filename =
     | Some cursor -> Carton.Unresolved_base { cursor }
     | None -> Unresolved_node
   in
-  verify ?threads:cfg.threads t oracle matrix;
+  let size = Hashtbl.create 0x7ff in
+  let on ~cursor:_ value uid =
+    Hashtbl.add size uid (Carton.Value.length value)
+  in
+  verify ?threads:cfg.threads ~on t oracle matrix;
   let idx = Hashtbl.create 0x7ff in
   let t = Carton.with_index t (Hashtbl.find idx) in
   let fn = function
@@ -355,7 +420,7 @@ let entries_of_pack ~cfg ~digest filename =
     | Unresolved_node -> assert false
     | Resolved_base { cursor; uid; kind; _ } ->
         Hashtbl.add idx uid cursor;
-        let length = oracle.Carton.size ~cursor in
+        let length = Hashtbl.find size uid in
         let meta = (t, None) in
         Cartonnage.Entry.make ~kind uid ~length:(length :> int) meta
     | Resolved_node { cursor; uid; kind; depth; parent; _ } ->
@@ -363,7 +428,7 @@ let entries_of_pack ~cfg ~digest filename =
         let raw = Hashtbl.find raw cursor in
         let delta = { source= parent; depth; raw } in
         let meta = (t, Some delta) in
-        let length = oracle.Carton.size ~cursor in
+        let length = Hashtbl.find size uid in
         Cartonnage.Entry.make ~kind uid ~length:(length :> int) meta
   in
   Array.map fn matrix
@@ -523,17 +588,14 @@ let verify_from_idx
       ; identify
       ; on_entry
       ; on_object
-      } ~digest idx =
-  if Sys.file_exists Fpath.(to_string (set_ext ".pack" idx)) = false then
+      } ~digest filename =
+  if Sys.file_exists (Fpath.to_string (Fpath.set_ext ".pack" filename)) = false
+  then
     failwith
       "Impossible to find the PACK file associated with the given IDX file";
-  let pack =
-    let z = De.bigstring_create De.io_buffer_size in
-    make ?pagesize ?cachesize ~z ~ref_length (Fpath.set_ext ".pack" idx)
-  in
   let (Carton.First_pass.Digest ({ length= hash_length; _ }, _)) = digest in
   let fd0, idx =
-    let fd = Unix.openfile (Fpath.to_string idx) Unix.[ O_RDONLY ] 0o644 in
+    let fd = Unix.openfile (Fpath.to_string filename) Unix.[ O_RDONLY ] 0o644 in
     let stat = Unix.fstat fd in
     let fd = (fd, stat.Unix.st_size) in
     let idx =
@@ -541,6 +603,15 @@ let verify_from_idx
         ~hash_length ~ref_length
     in
     (fst fd, idx)
+  in
+  let pack =
+    let z = De.bigstring_create De.io_buffer_size in
+    let index (uid : Carton.Uid.t) =
+      let uid = Classeur.uid_of_string_exn idx (uid :> string) in
+      Classeur.find_offset idx uid
+    in
+    make ?pagesize ?cachesize ~z ~ref_length ~index
+      (Fpath.set_ext ".pack" filename)
   in
   let oracle = Miou.call @@ fun () -> compile ~on:on_entry ~identify pack idx in
   let oracle = Miou.await_exn oracle in
@@ -580,10 +651,6 @@ let should_we_apply ~ref_length:_ ~source entry =
     | None -> Target.length entry / 3
     | Some patch -> Patch.length patch
   in
-  Log.debug (fun m ->
-      m "shoud apply for %a: src_len:%d, dst_len:%d, size_guessed:%d"
-        Carton.Uid.pp (Target.uid entry) (Source.length source)
-        (Target.length entry) size_guessed);
   if Source.length source < Target.length entry then false
   else
     let diff = Source.length source - Target.length entry in
@@ -597,8 +664,6 @@ let apply ~ref_length ~load ~window:t entry =
   let target = Lazy.from_fun (fun () -> load uid meta) in
   for i = 0 to len - 1 do
     let source = t.Window.arr.((t.Window.rd_pos + i) land msk) in
-    Log.debug (fun m ->
-        m "try to apply with %a" Carton.Uid.pp (Cartonnage.Source.uid source));
     if
       Cartonnage.Source.depth source < 50
       && should_we_apply ~ref_length ~source entry
@@ -626,10 +691,6 @@ let delta ~ref_length ~load =
   let entry = Cartonnage.Target.make entry in
   let k = Carton.Kind.to_int (Cartonnage.Target.kind entry) in
   let target = apply ~ref_length ~load ~window:windows.(k) entry in
-  Log.debug (fun m ->
-      m "patch found for %a? %b" Carton.Uid.pp
-        (Cartonnage.Target.uid entry)
-        Option.(is_some (Cartonnage.Target.patch entry)));
   begin
     match (target, not (Window.is_full windows.(k))) with
     | None, false -> ()
@@ -639,12 +700,21 @@ let delta ~ref_length ~load =
           and meta = Cartonnage.Target.meta entry in
           let target = load uid meta in
           let source = Cartonnage.Target.to_source entry ~target in
+          Log.debug (fun m ->
+              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+                (Cartonnage.Source.uid source)
+                (Cartonnage.Target.depth entry));
           append ~window:windows.(k) source
         end
     | Some target, _ ->
-        let source = Cartonnage.Target.to_source entry ~target in
-        if Cartonnage.Target.depth entry < 50 then
+        if Cartonnage.Target.depth entry < 50 then begin
+          let source = Cartonnage.Target.to_source entry ~target in
+          Log.debug (fun m ->
+              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+                (Cartonnage.Source.uid source)
+                (Cartonnage.Target.depth entry));
           append ~window:windows.(k) source
+        end
   end;
   entry
 
@@ -675,6 +745,7 @@ let to_pack ?with_header ?with_signature ?cursor ?level ~load targets =
     | `Flush (encoder, len) ->
         let bstr = Cachet.Bstr.of_bigstring dst in
         let str = Cachet.Bstr.sub_string bstr ~off:0 ~len in
+        Log.debug (fun m -> m "-> @[<hov>%a@]" (Hxd_string.pp Hxd.default) str);
         let signature = Option.map (digest str) ctx.signature in
         let encoder =
           Cartonnage.Encoder.dst encoder dst 0 (Bigarray.Array1.dim dst)
@@ -746,23 +817,28 @@ let delta_from_pack ~ref_length ~windows =
     let blob = Carton.Blob.make ~size in
     Carton.of_uid t blob ~uid
   in
+  let stored = Hashtbl.create 0x7ff in
   Seq.map @@ fun entry ->
+  Log.debug (fun m ->
+      m "delta-ify %a" Carton.Uid.pp (Cartonnage.Entry.uid entry));
   let delta = Cartonnage.Entry.meta entry in
   let entry =
     match delta with
-    | _, Some { source; depth; raw } ->
-        let patch =
-          Cartonnage.Patch.of_copy ~depth ~source (raw :> Cachet.bigstring)
-        in
-        Cartonnage.Target.make ~patch entry
-    | _, None -> Cartonnage.Target.make entry
+    | _, Some { source; raw; _ } when Hashtbl.mem stored source -> begin
+        match Hashtbl.find_opt stored source with
+        | Some depth ->
+            let raw = (raw :> Cachet.bigstring) in
+            let patch = Cartonnage.Patch.of_copy ~depth ~source raw in
+            Cartonnage.Target.make ~patch entry
+        | None -> Cartonnage.Target.make entry
+      end
+    | _ -> Cartonnage.Target.make entry
   in
   let k = Carton.Kind.to_int (Cartonnage.Target.kind entry) in
   let target = apply ~ref_length ~load ~window:windows.(k) entry in
-  Log.debug (fun m ->
-      m "patch found for %a? %b" Carton.Uid.pp
-        (Cartonnage.Target.uid entry)
-        Option.(is_some (Cartonnage.Target.patch entry)));
+  Hashtbl.add stored
+    (Cartonnage.Target.uid entry)
+    (Cartonnage.Target.depth entry);
   begin
     match (target, not (Window.is_full windows.(k))) with
     | None, false -> ()
@@ -772,17 +848,27 @@ let delta_from_pack ~ref_length ~windows =
           and meta = Cartonnage.Target.meta entry in
           let target = load uid meta in
           let source = Cartonnage.Target.to_source entry ~target in
+          Log.debug (fun m ->
+              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+                (Cartonnage.Source.uid source)
+                (Cartonnage.Target.depth entry));
           append ~window:windows.(k) source
         end
     | Some target, _ ->
-        let source = Cartonnage.Target.to_source entry ~target in
-        if Cartonnage.Target.depth entry < 50 then
+        if Cartonnage.Target.depth entry < 50 then begin
+          let source = Cartonnage.Target.to_source entry ~target in
+          Log.debug (fun m ->
+              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+                (Cartonnage.Source.uid source)
+                (Cartonnage.Target.depth entry));
           append ~window:windows.(k) source
+        end
   end;
   entry
 
 type sort = {
-    sort: 'a. 'a Cartonnage.Entry.t array list -> 'a Cartonnage.Entry.t Seq.t
+    sort:
+      'a. 'a Cartonnage.Entry.t array list -> int * 'a Cartonnage.Entry.t Seq.t
 }
 [@@unboxed]
 
@@ -800,11 +886,11 @@ let merge :
   let entries =
     List.map (function Ok arr -> arr | Error exn -> raise exn) entries
   in
-  let with_header =
-    List.fold_left (fun acc arr -> acc + Array.length arr) 0 entries
-  in
-  let entries = sort.sort entries in
+  Log.debug (fun m ->
+      m "Given PACK (%a) analyzed" Fmt.(Dump.list Fpath.pp) filenames);
+  let with_header, entries = sort.sort entries in
   let windows = Array.init 4 (fun _ -> Window.make ()) in
+  Log.debug (fun m -> m "Start to delta-ify entries");
   let targets = delta_from_pack ~ref_length ~windows entries in
   let load uid (t, _) =
     let size = Carton.size_of_uid t ~uid Carton.Size.zero in

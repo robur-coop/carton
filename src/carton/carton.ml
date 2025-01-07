@@ -83,6 +83,19 @@ module Size = struct
   let max = Int.max
 end
 
+module Uid = struct
+  type t = string
+
+  let unsafe_of_string x = x
+  let compare = String.compare
+  let equal = String.equal
+
+  let pp ppf str =
+    for i = 0 to String.length str - 1 do
+      Format.fprintf ppf "%02x" (Char.code str.[i])
+    done
+end
+
 module First_pass = struct
   type 'ctx hash = {
       feed_bytes: bytes -> off:int -> len:int -> 'ctx -> 'ctx
@@ -94,8 +107,20 @@ module First_pass = struct
   type digest = Digest : 'ctx hash * 'ctx -> digest
   type src = [ `Channel of in_channel | `String of string | `Manual ]
 
+  type 'ctx identify = {
+      init: Kind.t -> Size.t -> 'ctx
+    ; feed: De.bigstring -> 'ctx -> 'ctx
+    ; serialize: 'ctx -> Uid.t
+  }
+
+  type 'ctx base_state =
+    | Epsilon : 'ctx identify -> 'ctx base_state
+    | Compute_base : 'ctx * 'ctx identify -> 'ctx base_state
+
+  type gen = Gen : 'ctx base_state -> gen
+
   type kind =
-    | Base of Kind.t
+    | Base of Kind.t * Uid.t
     | Ofs of { sub: int; source: int; target: int }
     | Ref of { ptr: string; source: int; target: int }
 
@@ -133,6 +158,7 @@ module First_pass = struct
     ; zlib: Zl.Inf.decoder
     ; ref_length: int
     ; digest: digest
+    ; identify: gen
     ; k: decoder -> decode
   }
 
@@ -435,11 +461,20 @@ module First_pass = struct
         let entry =
           {
             offset= Int64.to_int decoder.consumed
-          ; kind= Base kind
+          ; kind= Base (kind, "")
           ; size= !size
           ; consumed= 0
           ; crc
           }
+        in
+        let identify =
+          match decoder.identify with
+          | Gen (Epsilon gen) ->
+              let ctx = gen.init kind !size in
+              Gen (Compute_base (ctx, gen))
+          | Gen (Compute_base (_, gen)) ->
+              let ctx = gen.init kind !size in
+              Gen (Compute_base (ctx, gen))
         in
         decode
           {
@@ -447,6 +482,7 @@ module First_pass = struct
             consumed= decoder.consumed +! Int64.of_int len
           ; counter_of_objects= succ decoder.counter_of_objects
           ; state= Inflate entry
+          ; identify
           ; k= decode
           }
     | 0b110 ->
@@ -521,8 +557,8 @@ module First_pass = struct
            [decompress] returns an error - because we fill at the beginning the
            input buffer with [0] (then, we reach end-of-input). *)
         peek_15 k_header decoder
-    | Inflate ({ kind= Base _; crc; _ } as entry) ->
-        let rec go zlib =
+    | Inflate ({ kind= Base (kind, _); crc; _ } as entry) ->
+        let rec go identify zlib =
           match Zl.Inf.decode zlib with
           | `Await zlib ->
               let len = src_rem decoder - Zl.Inf.src_rem zlib in
@@ -532,13 +568,35 @@ module First_pass = struct
                 {
                   decoder with
                   zlib
+                ; identify
                 ; input_pos= decoder.input_pos + len
                 ; consumed= decoder.consumed +! Int64.of_int len
                 ; state= Inflate { entry with crc }
                 }
-          | `Flush zlib -> go (Zl.Inf.flush zlib)
+          | `Flush zlib ->
+              let len =
+                Bigarray.Array1.dim decoder.output - Zl.Inf.dst_rem zlib
+              in
+              let bstr = Bigarray.Array1.sub decoder.output 0 len in
+              let identify =
+                match identify with
+                | Gen (Compute_base (ctx, gen)) ->
+                    Gen (Compute_base (gen.feed bstr ctx, gen))
+                | Gen (Epsilon _) -> assert false
+              in
+              go identify (Zl.Inf.flush zlib)
           | `Malformed err -> malformedf "Pack.decode.inflate (base): %s" err
           | `End zlib ->
+              let len =
+                Bigarray.Array1.dim decoder.output - Zl.Inf.dst_rem zlib
+              in
+              let bstr = Bigarray.Array1.sub decoder.output 0 len in
+              let uid =
+                match identify with
+                | Gen (Compute_base (ctx, gen)) ->
+                    gen.serialize (gen.feed bstr ctx)
+                | Gen (Epsilon _) -> assert false
+              in
               let len = src_rem decoder - Zl.Inf.src_rem zlib in
               let crc = crc_decoder decoder ~len crc in
               let zlib = Zl.Inf.reset zlib in
@@ -561,10 +619,12 @@ module First_pass = struct
               let consumed =
                 Int64.(to_int (sub decoder.consumed (of_int entry.offset)))
               in
-              let entry = { entry with consumed; crc } in
+              let entry =
+                { entry with kind= Base (kind, uid); consumed; crc }
+              in
               `Entry (entry, decoder)
         in
-        go decoder.zlib
+        go decoder.identify decoder.zlib
     | Inflate ({ kind= Ofs _ | Ref _; crc; _ } as entry) ->
         let source = ref (source entry) in
         let target = ref (target entry) in
@@ -664,7 +724,7 @@ module First_pass = struct
         in
         refill_uid k decoder
 
-  let decoder ~output ~allocate ~ref_length ~digest src =
+  let decoder ~output ~allocate ~ref_length ~digest ~identify src =
     let input, input_pos, input_len =
       match src with
       | `Manual -> (De.bigstring_empty, 1, 0)
@@ -692,11 +752,12 @@ module First_pass = struct
     ; ref_length
     ; k= decode
     ; digest
+    ; identify= Gen (Epsilon identify)
     }
 
   let decode decoder = decoder.k decoder
 
-  let of_seq ~output ~allocate ~ref_length ~digest seq =
+  let of_seq ~output ~allocate ~ref_length ~digest ~identify seq =
     let input = De.bigstring_create De.io_buffer_size in
     let first = ref true in
     let rec go decoder seq (str, src_off, src_len) () =
@@ -752,7 +813,9 @@ module First_pass = struct
       | `Malformed err -> failwith err
       | `End hash -> Seq.Cons (`Hash hash, Fun.const Seq.Nil)
     in
-    let decoder = decoder ~output ~allocate ~ref_length ~digest `Manual in
+    let decoder =
+      decoder ~output ~allocate ~ref_length ~digest ~identify `Manual
+    in
     go decoder seq (String.empty, 0, 0)
 end
 
@@ -825,19 +888,6 @@ type 'fd t = {
   ; tmp: De.bigstring
   ; allocate: int -> Zl.window
 }
-
-module Uid = struct
-  type t = string
-
-  let unsafe_of_string x = x
-  let compare = String.compare
-  let equal = String.equal
-
-  let pp ppf str =
-    for i = 0 to String.length str - 1 do
-      Format.fprintf ppf "%02x" (Char.code str.[i])
-    done
-end
 
 let fd { cache; _ } = Cachet.fd cache
 let cache { cache; _ } = cache
@@ -978,15 +1028,20 @@ and size_of_offset t ?(visited = Visited.empty) ~cursor size =
         (Int.max size size')
   | _ -> assert false
 
-let map t ~cursor =
-  let (kind, size'), cursor' = header_of_entry t ~cursor in
+let map t ~cursor ~consumed =
+  let (kind, _), cursor' = header_of_entry t ~cursor in
   match kind with
   | 0b000 | 0b101 -> raise Bad_type
-  | 0b001 | 0b010 | 0b011 | 0b100 -> Cachet.map t.cache ~pos:cursor' size'
+  | 0b001 | 0b010 | 0b011 | 0b100 ->
+      let size = consumed - (cursor' - cursor) in
+      Cachet.map t.cache ~pos:cursor' size
   | 0b110 ->
       let _, cursor' = header_of_ofs_delta t ~cursor:cursor' in
-      Cachet.map t.cache ~pos:cursor' size'
-  | 0b111 -> Cachet.map t.cache ~pos:(cursor' + t.ref_length) size'
+      let size = consumed - (cursor' - cursor) in
+      Cachet.map t.cache ~pos:cursor' size
+  | 0b111 ->
+      let size = consumed - (cursor' + t.ref_length - cursor) in
+      Cachet.map t.cache ~pos:(cursor' + t.ref_length) size
   | _ -> assert false
 
 let actual_size_of_offset : type fd. fd t -> cursor:int -> int =
@@ -1217,9 +1272,9 @@ let of_offset_with_path t ~path blob ~cursor =
 let of_offset_with_source t { Value.kind; blob; depth; _ } ~cursor =
   of_offset_with_source t kind blob ~depth ~cursor
 
-type identify = kind:Kind.t -> ?off:int -> ?len:int -> De.bigstring -> Uid.t
+type identify = Identify : 'ctx First_pass.identify -> identify
 
-let uid_of_offset ~(identify : identify) t blob ~cursor =
+let uid_of_offset ~identify:(Identify gen) t blob ~cursor =
   let (kind', _), cursor' = header_of_entry t ~cursor in
   let kind =
     match kind' with
@@ -1230,10 +1285,18 @@ let uid_of_offset ~(identify : identify) t blob ~cursor =
     | _ -> raise Bad_type
   in
   let value = uncompress t kind blob ~cursor:cursor' in
-  (kind, identify ~kind ~len:value.len (Blob.payload blob))
+  let bstr = Blob.payload blob in
+  let ctx = gen.First_pass.init kind value.len in
+  let ctx = gen.First_pass.feed (Bigarray.Array1.sub bstr 0 value.len) ctx in
+  let uid = gen.First_pass.serialize ctx in
+  (kind, uid)
 
-let uid_of_offset_with_source ~(identify : identify) t ~kind blob ~depth ~cursor
-    =
+let identify (Identify gen) ~kind ~len bstr =
+  let ctx = gen.First_pass.init kind len in
+  let ctx = gen.First_pass.feed (Bigarray.Array1.sub bstr 0 len) ctx in
+  gen.First_pass.serialize ctx
+
+let uid_of_offset_with_source ~identify:gen t ~kind blob ~depth ~cursor =
   let (kind', _), cursor' = header_of_entry t ~cursor in
   match kind' with
   | 0b000 | 0b101 -> raise Bad_type
@@ -1241,33 +1304,33 @@ let uid_of_offset_with_source ~(identify : identify) t ~kind blob ~depth ~cursor
       assert (kind = `A);
       assert (depth = 1);
       let v = uncompress t `A blob ~cursor:cursor' in
-      identify ~kind ~len:v.len (Blob.payload blob)
+      identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b010 ->
       assert (kind = `B);
       assert (depth = 1);
       let v = uncompress t `B blob ~cursor:cursor' in
-      identify ~kind ~len:v.len (Blob.payload blob)
+      identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b011 ->
       assert (kind = `C);
       assert (depth = 1);
       let v = uncompress t `C blob ~cursor:cursor' in
-      identify ~kind ~len:v.len (Blob.payload blob)
+      identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b100 ->
       assert (kind = `D);
       assert (depth = 1);
       let v = uncompress t `D blob ~cursor:cursor' in
-      identify ~kind ~len:v.len (Blob.payload blob)
+      identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b110 ->
       let _, cursor'' = header_of_ofs_delta t ~cursor:cursor' in
       let { Value.blob; len; _ } =
         of_delta t kind blob ~depth ~cursor:cursor''
       in
-      identify ~kind ~len (Blob.payload blob)
+      identify gen ~kind ~len (Blob.payload blob)
   | 0b111 ->
       let { Value.blob; len; _ } =
         of_delta t kind blob ~depth ~cursor:(cursor' + t.ref_length)
       in
-      identify ~kind ~len (Blob.payload blob)
+      identify gen ~kind ~len (Blob.payload blob)
   | _ -> assert false
 
 type children = cursor:int -> uid:Uid.t -> int list

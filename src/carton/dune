@@ -25,4 +25,4 @@
  (modules cartonnage)
  (public_name carton.cartonnage)
  (wrapped false)
- (libraries carton))
+ (libraries hxd.core hxd.string fmt carton))

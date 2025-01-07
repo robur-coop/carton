@@ -28,3 +28,8 @@ Get an object from new.pack via a hash
   $ carton get -q new.idx 7af99c9e7d4768fa681f4fe4ff61259794cf719b -o 03.commit
 Compare the output of objects
   $ diff 02.commit 03.commit
+  $ carton merge -p bomb.pack -p bomb.pack merge.pack
+  $ carton index merge.pack
+  $ carton verify merge.pack -q
+  $ carton get -q merge.idx 7af99c9e7d4768fa681f4fe4ff61259794cf719b -o 04.commit
+  $ diff 03.commit 04.commit

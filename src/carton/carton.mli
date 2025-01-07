@@ -125,6 +125,12 @@ module First_pass : sig
 
   type digest = Digest : 'ctx hash * 'ctx -> digest
 
+  type 'ctx identify = {
+      init: Kind.t -> Size.t -> 'ctx
+    ; feed: De.bigstring -> 'ctx -> 'ctx
+    ; serialize: 'ctx -> Uid.t
+  }
+
   (** Type of PACK entries.
 
       Entries in a PACK file can be:
@@ -148,7 +154,7 @@ module First_pass : sig
       source object (as far as Git is concerned, this identifier corresponds to
       what [git hash-object] can give). *)
   type kind =
-    | Base of Kind.t
+    | Base of Kind.t * Uid.t
     | Ofs of { sub: int; source: Size.t; target: Size.t }
     | Ref of { ptr: Uid.t; source: Size.t; target: Size.t }
 
@@ -207,6 +213,7 @@ module First_pass : sig
     -> allocate:(int -> De.window)
     -> ref_length:int
     -> digest:digest
+    -> identify:'ctx identify
     -> src
     -> decoder
 
@@ -235,6 +242,7 @@ module First_pass : sig
     -> allocate:(int -> De.window)
     -> ref_length:int
     -> digest:digest
+    -> identify:'ctx identify
     -> string Seq.t
     -> [ `Number of int | `Entry of entry | `Hash of string ] Seq.t
   (** [of_seq ~output ~allocate ~ref_length ~digest seq] analyses a PACK stream
@@ -365,7 +373,7 @@ val cache : 'fd t -> 'fd Cachet.t
 val allocate : 'fd t -> int -> Zl.window
 val tmp : 'fd t -> De.bigstring
 val ref_length : 'fd t -> int
-val map : 'fd t -> cursor:int -> Cachet.Bstr.t
+val map : 'fd t -> cursor:int -> consumed:int -> Cachet.Bstr.t
 val with_index : 'fd t -> (Uid.t -> int) -> 'fd t
 
 (* {2 Reconstruct a patch.}
@@ -561,7 +569,7 @@ val of_offset_with_source : 'fd t -> Value.t -> cursor:int -> Value.t
     However, 2 objects with the same contents but different types must have
     different unique identifiers. *)
 
-type identify = kind:Kind.t -> ?off:int -> ?len:int -> De.bigstring -> Uid.t
+type identify = Identify : 'ctx First_pass.identify -> identify
 
 val uid_of_offset :
   identify:identify -> 'fd t -> Blob.t -> cursor:int -> Kind.t * Uid.t

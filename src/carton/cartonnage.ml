@@ -168,7 +168,10 @@ module Target = struct
     if Carton.Value.kind target <> kind t then
       invalid_arg "Cartonnage.Target.to_source: bad kind";
     if Carton.Value.length target <> length t then
-      invalid_arg "Cartonnage.Target.to_source: bad length";
+      Fmt.invalid_arg
+        "Cartonnage.Target.to_source: bad length (%d byte(s) <> %d byte(s))"
+        (Carton.Value.length target)
+        (length t);
     let bstr = Carton.Value.bigstring target in
     let bstr = Bigarray.Array1.sub bstr 0 (Carton.Value.length target) in
     let index = Duff.make bstr in
@@ -227,22 +230,27 @@ module Encoder = struct
         | `Flush (encoder, len) -> `Flush (H encoder, len)
         | `End -> `End
       end
-    | R { src_len= -1; _ } as state -> `Flush (state, 0)
     | R { src_len= 0; _ } -> `End
     | R { src; src_off; src_len; dst_off; dst_len } ->
         let len = Int.min src_len dst_len in
         Cachet.memcpy src ~src_off o ~dst_off ~len;
+        let bstr = Cachet.Bstr.of_bigstring src in
+        Log.debug (fun m ->
+            m "@[<hov>%a@]"
+              (Hxd_string.pp Hxd.default)
+              (Cachet.Bstr.sub_string bstr ~off:src_off ~len));
+        Log.debug (fun m -> m "dst_off:%d, dst_len:%d" dst_off dst_len);
         let state =
           R
             {
               src
             ; src_off= src_off + len
             ; src_len= src_len - len
-            ; dst_off
-            ; dst_len
+            ; dst_off= dst_off + len
+            ; dst_len= dst_len - len
             }
         in
-        `Flush (state, len)
+        `Flush (state, dst_off + len)
 
   let dst encoder s j l =
     match encoder with
@@ -265,10 +273,12 @@ module Encoder = struct
         let encoder = Zh.N.encoder ~level ~i ~q ~w ~source bstr `Manual hunks in
         H encoder
     | Some (Patch.Carbon_copy { bstr= src; _ }) ->
+        Log.debug (fun m ->
+            m "Carbon copy of %a" Carton.Uid.pp (Target.uid entry));
         let src_off = 0
         and src_len = De.bigstring_length src
         and dst_off = 0
-        and dst_len = -1 in
+        and dst_len = 0 in
         R { src; src_off; src_len; dst_off; dst_len }
     | None ->
         let { q; w; _ } = buffers in
