@@ -168,10 +168,7 @@ module Target = struct
     if Carton.Value.kind target <> kind t then
       invalid_arg "Cartonnage.Target.to_source: bad kind";
     if Carton.Value.length target <> length t then
-      Fmt.invalid_arg
-        "Cartonnage.Target.to_source: bad length (%d byte(s) <> %d byte(s))"
-        (Carton.Value.length target)
-        (length t);
+      invalid_arg "Cartonnage.Target.to_source: bad length";
     let bstr = Carton.Value.bigstring target in
     let bstr = Bigarray.Array1.sub bstr 0 (Carton.Value.length target) in
     let index = Duff.make bstr in
@@ -234,12 +231,6 @@ module Encoder = struct
     | R { src; src_off; src_len; dst_off; dst_len } ->
         let len = Int.min src_len dst_len in
         Cachet.memcpy src ~src_off o ~dst_off ~len;
-        let bstr = Cachet.Bstr.of_bigstring src in
-        Log.debug (fun m ->
-            m "@[<hov>%a@]"
-              (Hxd_string.pp Hxd.default)
-              (Cachet.Bstr.sub_string bstr ~off:src_off ~len));
-        Log.debug (fun m -> m "dst_off:%d, dst_len:%d" dst_off dst_len);
         let state =
           R
             {

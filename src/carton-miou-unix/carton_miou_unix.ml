@@ -387,10 +387,6 @@ let entries_of_pack ~cfg ~digest filename =
   let on ~max:_ entry =
     let cursor = entry.offset and consumed = entry.consumed in
     let bstr = Carton.map t ~cursor ~consumed in
-    Log.debug (fun m ->
-        m "%08x: @[<hov>%a@]" cursor
-          (Hxd_string.pp Hxd.default)
-          (Cachet.Bstr.to_string bstr));
     Hashtbl.add raw cursor bstr
   in
   let seq = seq_of_filename filename in
@@ -745,7 +741,6 @@ let to_pack ?with_header ?with_signature ?cursor ?level ~load targets =
     | `Flush (encoder, len) ->
         let bstr = Cachet.Bstr.of_bigstring dst in
         let str = Cachet.Bstr.sub_string bstr ~off:0 ~len in
-        Log.debug (fun m -> m "-> @[<hov>%a@]" (Hxd_string.pp Hxd.default) str);
         let signature = Option.map (digest str) ctx.signature in
         let encoder =
           Cartonnage.Encoder.dst encoder dst 0 (Bigarray.Array1.dim dst)
@@ -886,8 +881,6 @@ let merge :
   let entries =
     List.map (function Ok arr -> arr | Error exn -> raise exn) entries
   in
-  Log.debug (fun m ->
-      m "Given PACK (%a) analyzed" Fmt.(Dump.list Fpath.pp) filenames);
   let with_header, entries = sort.sort entries in
   let windows = Array.init 4 (fun _ -> Window.make ()) in
   Log.debug (fun m -> m "Start to delta-ify entries");

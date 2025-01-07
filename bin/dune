@@ -81,6 +81,8 @@
   logs.cli
   logs.fmt
   logs.threaded
+  hxd.core
+  hxd.string
   fmt
   fmt.cli
   fmt.tty
