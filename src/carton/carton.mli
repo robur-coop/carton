@@ -130,6 +130,35 @@ module First_pass : sig
     ; feed: De.bigstring -> 'ctx -> 'ctx
     ; serialize: 'ctx -> Uid.t
   }
+  (** An object stored in a PACK file can be identified by a unique reference.
+      In the case of Git, this reference is a SHA1 hash resulting from the type,
+      size and content of the object. For the first phase of analysis, it is
+      possible to identify certain objects (more specifically "base" objects).
+
+      Here's an example of how to calculate the identifier of a Git object:
+
+      {[
+        let identify =
+          let open Digestif in
+          let kind_to_string = function
+            | `A -> "commit"
+            | `B -> "tree"
+            | `C -> "blob"
+            | `D -> "tag"
+          in
+          let init kind (len : Carton.Size.t) =
+            let hdr =
+              Format.kasprintf "%s %d\000" (kind_to_string kind) (len :> int)
+            in
+            let ctx = SHA1.empty in
+            SHA1.feed_string ctx hdr
+          in
+          let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
+          let serialize ctx =
+            SHA1.get ctx |> SHA1.to_raw_string |> Carton.Uid.unsafe_of_string
+          in
+          { Carton.First_pass.init; feed; serialize }
+      ]} *)
 
   (** Type of PACK entries.
 
@@ -199,7 +228,7 @@ module First_pass : sig
 
   type src = [ `Channel of in_channel | `String of string | `Manual ]
   (** The type for input sources. With a [`Manual] source the client must
-      provide input with {!src}. *)
+      provide input with {!val:src}. *)
 
   type decode =
     [ `Await of decoder
@@ -544,32 +573,17 @@ val of_offset_with_source : 'fd t -> Value.t -> cursor:int -> Value.t
     at [cursor] into [t]. This function is {i tail-recursive} and use the given
     [source] if the requested object is a patch. *)
 
-(** {3 Unique identifier of objects.}
-
-    Unique identifier of objects is a user-defined type which is not described
-    by the format of the PACK file. By this fact, the way to {i digest} an
-    object is at the user's discretion. For example, Git {i prepends} the value
-    by an header such as:
-
-    {[
-      let digest v =
-        let kind = match kind v with
-          | `A -> "commit"
-          | `B -> "tree"
-          | `C -> "blob"
-          | `D -> "tag" in
-        let hdr = Fmt.str "%s %d\000" kind (len v) int
-        let ctx = Digest.empty in
-        Digest.feed_string ctx hdr ;
-        Digest.feed_bigstring ctx (Bigarray.Array1.sub (raw v) 0 (len v)) ;
-        Digest.finalize ctx
-    ]}
-
-    Of course, the user can decide how to digest a value (see {!identify}).
-    However, 2 objects with the same contents but different types must have
-    different unique identifiers. *)
-
-type identify = Identify : 'ctx First_pass.identify -> identify
+type identify =
+  | Identify : 'ctx First_pass.identify -> identify
+      (** Carton can be asked to calculate the identifier of an object but does
+          not require the algorithm used (SHA1 or SHA256 for example) to be
+          known. It only handles the result of this calculation, which is
+          represented by a {!type:Uid.t}. For more details on how to implement
+          identify, please refer to what is
+          {{!type:First_pass.identify} explained} in the first phase of
+          analysing a PACK file. You then simply need to "surround" your value
+          with [Carton.Identify] to completely abstract the algorithm used to
+          calculate the object identifier. *)
 
 val uid_of_offset :
   identify:identify -> 'fd t -> Blob.t -> cursor:int -> Kind.t * Uid.t

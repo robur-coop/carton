@@ -118,16 +118,13 @@ let of_delta t kind blob ~depth ~cursor =
         let length = Carton.Zh.M.dst_len decoder in
         let value = Carton.Value.of_blob ~kind ~length ~depth blob in
         Lwt.return value
-    | `Malformed err -> failwith err
-    | `Header (src_len, dst_len, decoder) ->
+    | `Malformed err ->
+        Log.err (fun m -> m "Get an error for %08x: %s" cursor err);
+        failwith err
+    | `Header (_, dst_len, decoder) ->
         let source = Carton.Blob.source blob in
         let payload = Carton.Blob.payload blob in
-        Log.debug (fun m ->
-            m "specify the source to apply the patch on %08x" cursor);
-        Log.debug (fun m ->
-            m "src_len: %d, required: %d" (Bigarray.Array1.dim source) src_len);
         let decoder = Carton.Zh.M.source decoder source in
-        Log.debug (fun m -> m "dst_len: %d" dst_len);
         let decoder = Carton.Zh.M.dst decoder payload 0 dst_len in
         (go [@tailcall]) slice blob decoder
     | `Await decoder -> begin
@@ -142,7 +139,6 @@ let of_delta t kind blob ~depth ~cursor =
             (go [@tailcall]) slice blob decoder
       end
   in
-  Log.debug (fun m -> m "load %08x" cursor);
   Cachet_lwt.load (Carton.cache t) cursor >>= function
   | Some ({ offset; payload; length } as slice) ->
       let off = cursor - offset in
@@ -195,7 +191,6 @@ let identify (Carton.Identify gen) ~kind ~len bstr =
 let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
   | [||] -> Lwt.return_unit
   | [| cursor |] ->
-      Log.debug (fun m -> m "resolve node at %08x" cursor);
       of_offset_with_source t base.value ~cursor >>= fun value ->
       let len = Carton.Value.length value
       and bstr = Carton.Value.bigstring value
@@ -218,7 +213,6 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
       let rec go idx =
         if idx < Array.length cursors then begin
           let cursor = cursors.(idx) in
-          Log.debug (fun m -> m "resolve node at %08x" cursor);
           Log.debug (fun m ->
               m "blob: %d byte(s)"
                 (Carton.(Blob.size (Value.blob base.value)) :> int));
@@ -236,8 +230,6 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
           matrix.(pos) <-
             Resolved_node { cursor; uid; crc; kind; depth; parent= base.uid };
           let children = oracle.children ~cursor ~uid in
-          Log.debug (fun m ->
-              m "resolve children of %08x %a" cursor Carton.Uid.pp uid);
           let children = Array.of_list children in
           let value = Carton.Value.with_source ~source:dirty value in
           let value = Carton.Value.flip value in
@@ -369,7 +361,6 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
                 m "new OBJ_OFS object at %08x (rel: %08x)" offset sub);
             let parent = offset - sub in
             update_size ~parent offset (Carton.Size.max source target);
-            Log.debug (fun m -> m "new child for %08x at %08x" parent offset);
             new_child ~parent:(`Ofs parent) offset;
             incr pos
         | Ref { ptr; source; target; _ } ->
@@ -381,7 +372,8 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
                   Hashtbl.add sizes offset (ref (Carton.Size.max source target))
             end;
             Hashtbl.add ref_index offset ptr;
-            new_child ~parent:(`Ref ptr) offset
+            new_child ~parent:(`Ref ptr) offset;
+            incr pos
       end
   in
   Lwt_seq.iter_p fn seq >|= fun () ->
@@ -497,7 +489,9 @@ let of_stream_to_store ctx ~append stream =
               Lwt.return (Lwt_seq.Cons (`Number n, next))
           | false -> Lwt.return (Lwt_seq.Cons (`Entry entry, next))
         end
-    | `Malformed err -> failwith err
+    | `Malformed err ->
+        Log.err (fun m -> m "Invalid PACK: %s" err);
+        failwith err
     | `End hash -> Lwt.return (Lwt_seq.Cons (`Hash hash, Lwt_seq.empty))
   in
   let decoder =
