@@ -216,16 +216,13 @@ let seq_of_filename filename =
 
 let compile ?(on = ignorem) ~identify ~digest_length seq =
   let children_by_offset = Hashtbl.create 0x7ff in
-  let children_by_uid : (Carton.Uid.t, int list) Hashtbl.t =
-    Hashtbl.create 0x7ff
-  in
+  let children_by_uid = Hashtbl.create 0x7ff in
   let sizes : (int, Carton.Size.t ref) Hashtbl.t = Hashtbl.create 0x7ff in
   let where = Hashtbl.create 0x7ff in
   let crcs = Hashtbl.create 0x7ff in
   let is_base = Hashtbl.create 0x7ff in
   let index = Hashtbl.create 0x7ff in
   let ref_index = Hashtbl.create 0x7ff in
-  let is_thin = ref false in
   let hash = ref (String.make digest_length '\000') in
   let update_size ~parent offset (size : Carton.Size.t) =
     Log.debug (fun m ->
@@ -330,7 +327,6 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   ; size
   ; checksum
   ; is_base
-  ; is_thin= !is_thin
   ; number_of_objects= !number_of_objects
   ; hash= !hash
   }
@@ -569,7 +565,6 @@ let compile ?(on = ignorem) ~identify pack idx =
   ; size
   ; checksum
   ; is_base
-  ; is_thin= false
   ; number_of_objects
   ; hash= Classeur.pack idx
   }

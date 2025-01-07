@@ -593,7 +593,6 @@ type oracle = {
   ; size: cursor:int -> Size.t
   ; checksum: cursor:int -> Optint.t
   ; is_base: pos:int -> int option
-  ; is_thin: bool
   ; number_of_objects: int
   ; hash: string
 }
