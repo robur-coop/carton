@@ -1,5 +1,23 @@
 let ( $ ) f g = fun x -> f (g x)
 
+let reporter ppf =
+  let report src level ~over k msgf =
+    let k _ = over (); k () in
+    let with_metadata header _tags k ppf fmt =
+      Format.kfprintf k ppf
+        ("%a[%a]: " ^^ fmt ^^ "\n%!")
+        Logs_fmt.pp_header (level, header)
+        Fmt.(styled `Magenta string)
+        (Logs.Src.name src)
+    in
+    msgf @@ fun ?header ?tags fmt -> with_metadata header tags k ppf fmt
+  in
+  { Logs.report }
+
+let () = Fmt_tty.setup_std_outputs ~style_renderer:`Ansi_tty ~utf_8:true ()
+let () = Logs.set_reporter (reporter Fmt.stdout)
+let () = Logs.set_level ~all:true (Some Logs.Debug)
+
 let stream_of_filename filename =
   let ic = open_in filename in
   let bf = Bytes.create 0x7ff in
@@ -202,5 +220,34 @@ let test01 =
   Alcotest.(check hex) "find" (uid :> string) (uid' :> string);
   Lwt.return_unit
 
+let test02 =
+  Alcotest_lwt.test_case "ref" `Quick @@ fun _sw _ ->
+  let stream = stream_of_filename "ref.pack" in
+  let append _str ~off:_ ~len:_ = Lwt.return_unit in
+  let cache = cache_of_filename "ref.pack" in
+  let cfg = Carton_lwt.config ~ref_length (Carton.Identify identify) in
+  Carton_lwt.verify_from_stream ~cfg ~digest ~append cache stream
+  >>= fun (matrix, _hash) ->
+  let count = ref 0 in
+  let no_unresolved =
+    Array.for_all
+      (function
+        | Carton.Unresolved_base { cursor } ->
+            Logs.debug (fun m -> m "Missing object at %08x" cursor);
+            incr count;
+            false
+        | Unresolved_node ->
+            Logs.debug (fun m -> m "Missing object %d" !count);
+            incr count;
+            false
+        | Resolved_base _ | Resolved_node _ -> incr count; true)
+      matrix
+  in
+  Logs.debug (fun m -> m "%d object(s)" (Array.length matrix));
+  Alcotest.(check bool) "all resolved" no_unresolved true;
+  Lwt.return_unit
+
 let () =
-  Alcotest_lwt.run "carton-lwt" [ ("bomb", [ test00; test01 ]) ] |> Lwt_main.run
+  Alcotest_lwt.run "carton-lwt"
+    [ ("bomb", [ test00; test01 ]); ("ref", [ test02 ]) ]
+  |> Lwt_main.run
