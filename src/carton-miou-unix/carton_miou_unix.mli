@@ -28,7 +28,7 @@ type config = {
   ; ref_length: int
   ; identify: Carton.identify
   ; on_entry: max:int -> entry -> unit
-  ; on_object: Carton.Value.t -> Carton.Uid.t -> unit
+  ; on_object: cursor:int -> Carton.Value.t -> Carton.Uid.t -> unit
 }
 
 val config :
@@ -36,7 +36,7 @@ val config :
   -> ?pagesize:int
   -> ?cachesize:int
   -> ?on_entry:(max:int -> entry -> unit)
-  -> ?on_object:(Carton.Value.t -> Carton.Uid.t -> unit)
+  -> ?on_object:(cursor:int -> Carton.Value.t -> Carton.Uid.t -> unit)
   -> ref_length:int
   -> Carton.identify
   -> config
@@ -90,7 +90,8 @@ val delta_from_pack :
   -> ('fd Carton.t * delta option) Cartonnage.Target.t Seq.t
 
 type sort = {
-    sort: 'a. 'a Cartonnage.Entry.t array list -> 'a Cartonnage.Entry.t Seq.t
+    sort:
+      'a. 'a Cartonnage.Entry.t array list -> int * 'a Cartonnage.Entry.t Seq.t
 }
 [@@unboxed]
 

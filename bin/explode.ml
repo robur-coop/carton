@@ -2,20 +2,21 @@ open Digestif
 
 let ( $ ) f g x = f (g x)
 
-let git_identify ~kind ?(off = 0) ?len bstr =
-  let default = Bigarray.Array1.dim bstr - off in
-  let len = Option.value ~default len in
+let git_identify =
   let pp_kind ppf = function
     | `A -> Fmt.string ppf "commit"
     | `B -> Fmt.string ppf "tree"
     | `C -> Fmt.string ppf "blob"
     | `D -> Fmt.string ppf "tag"
   in
-  let hdr = Fmt.str "%a %d\000" pp_kind kind len in
-  let ctx = SHA1.empty in
-  let ctx = SHA1.feed_string ctx hdr in
-  let ctx = SHA1.feed_bigstring ctx ~off ~len bstr in
-  SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) ctx
+  let init kind (len : Carton.Size.t) =
+    let hdr = Fmt.str "%a %d\000" pp_kind kind (len :> int) in
+    let ctx = SHA1.empty in
+    SHA1.feed_string ctx hdr
+  in
+  let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
+  let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
+  { Carton.First_pass.init; feed; serialize }
 
 let kind_to_string fmt kind =
   match (fmt, kind) with
@@ -69,9 +70,9 @@ let run quiet threads pagesize digest fmt_kind fmt_path (Fmt (_, fmt_output))
     pack =
   Miou_unix.run ~domains:threads @@ fun () ->
   let ref_length = Digestif.SHA1.digest_size in
-  let identify = git_identify in
+  let identify = Carton.Identify git_identify in
   let queue = Miou.Queue.create () in
-  let on_object uid value = on queue fmt_kind fmt_path uid value in
+  let on_object ~cursor:_ uid value = on queue fmt_kind fmt_path uid value in
   let cfg =
     Carton_miou_unix.config ~threads ~pagesize ~ref_length ~on_object identify
   in

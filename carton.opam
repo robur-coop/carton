@@ -31,5 +31,5 @@ build: [
 dev-repo: "git+https://github.com/robur-coop/carton.git"
 
 pin-depends: [
-  [ "cachet.dev" "git+https://github.com/robur-coop/cachet.git#6bef912ee7f5e9919f65dbfc04dc3433bcfc2cc3" ]
+  [ "cachet.dev" "git+https://github.com/robur-coop/cachet.git#8796b18ae7e4ecab25954ba188542951f36fdc0a" ]
 ]

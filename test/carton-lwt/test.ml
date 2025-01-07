@@ -1,4 +1,4 @@
-let ( % ) f g = fun x -> f (g x)
+let ( $ ) f g = fun x -> f (g x)
 
 let stream_of_filename filename =
   let ic = open_in filename in
@@ -29,28 +29,32 @@ let cache_of_filename filename =
 
 let ref_length = Digestif.SHA1.digest_size
 
-let identify ~kind ?(off = 0) ?len bstr =
-  let default = Bigarray.Array1.dim bstr - off in
-  let len = Option.value ~default len in
+let identify =
+  let open Digestif in
   let pp_kind ppf = function
     | `A -> Fmt.string ppf "commit"
     | `B -> Fmt.string ppf "tree"
     | `C -> Fmt.string ppf "blob"
     | `D -> Fmt.string ppf "tag"
   in
-  let hdr = Fmt.str "%a %d\000" pp_kind kind len in
-  let ctx = Digestif.SHA1.empty in
-  let ctx = Digestif.SHA1.feed_string ctx hdr in
-  let ctx = Digestif.SHA1.feed_bigstring ctx ~off ~len bstr in
-  let hash = Digestif.SHA1.get ctx in
-  let hash = Digestif.SHA1.to_raw_string hash in
-  Carton.Uid.unsafe_of_string hash
+  let init kind (len : Carton.Size.t) =
+    let hdr = Fmt.str "%a %d\000" pp_kind kind (len :> int) in
+    let ctx = SHA1.empty in
+    SHA1.feed_string ctx hdr
+  in
+  let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
+  let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
+  { Carton.First_pass.init; feed; serialize }
 
 let identify_value value =
   let kind = Carton.Value.kind value in
   let bstr = Carton.Value.bigstring value in
   let len = Carton.Value.length value in
-  identify ~kind ~len bstr
+  let ctx = identify.Carton.First_pass.init kind (Carton.Size.of_int_exn len) in
+  let ctx =
+    identify.Carton.First_pass.feed (Bigarray.Array1.sub bstr 0 len) ctx
+  in
+  identify.Carton.First_pass.serialize ctx
 
 let digest =
   let feed_bigstring bstr ctx = Digestif.SHA1.feed_bigstring ctx bstr in
@@ -61,7 +65,7 @@ let digest =
     {
       Carton.First_pass.feed_bytes
     ; feed_bigstring
-    ; serialize= Digestif.SHA1.to_raw_string % Digestif.SHA1.get
+    ; serialize= Digestif.SHA1.to_raw_string $ Digestif.SHA1.get
     ; length= Digestif.SHA1.digest_size
     }
   in
@@ -93,7 +97,7 @@ let test00 =
   let stream = stream_of_filename "bomb.pack" in
   let append _str ~off:_ ~len:_ = Lwt.return_unit in
   let cache = cache_of_filename "bomb.pack" in
-  let cfg = Carton_lwt.config ~ref_length identify in
+  let cfg = Carton_lwt.config ~ref_length (Carton.Identify identify) in
   Carton_lwt.verify_from_stream ~cfg ~digest ~append cache stream
   >>= fun (matrix, _hash) ->
   let uid =
@@ -117,7 +121,7 @@ let test00 =
 let entries_of_pack filename =
   let stream = stream_of_filename filename in
   let cache = cache_of_filename filename in
-  let cfg = Carton_lwt.config ~ref_length identify in
+  let cfg = Carton_lwt.config ~ref_length (Carton.Identify identify) in
   let buf = Buffer.create 0x7ff in
   let append str ~off ~len =
     Buffer.add_substring buf str off len;

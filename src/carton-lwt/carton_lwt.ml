@@ -187,6 +187,11 @@ let bigstring_copy bstr =
 
 type base = { value: Carton.Value.t; uid: Carton.Uid.t; depth: int }
 
+let identify (Carton.Identify gen) ~kind ~len bstr =
+  let ctx = gen.Carton.First_pass.init kind (Carton.Size.of_int_exn len) in
+  let ctx = gen.Carton.First_pass.feed (Bigarray.Array1.sub bstr 0 len) ctx in
+  gen.Carton.First_pass.serialize ctx
+
 let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
   | [||] -> Lwt.return_unit
   | [| cursor |] ->
@@ -195,7 +200,7 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
       let len = Carton.Value.length value
       and bstr = Carton.Value.bigstring value
       and kind = Carton.Value.kind value in
-      let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+      let uid = identify oracle.Carton.identify ~kind ~len bstr
       and pos = oracle.where ~cursor
       and crc = oracle.checksum ~cursor
       and depth = succ base.depth in
@@ -223,7 +228,7 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
           let len = Carton.Value.length value
           and bstr = Carton.Value.bigstring value
           and kind = Carton.Value.kind value in
-          let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+          let uid = identify oracle.Carton.identify ~kind ~len bstr
           and pos = oracle.where ~cursor
           and crc = oracle.checksum ~cursor
           and depth = succ base.depth in
@@ -275,7 +280,7 @@ let verify ?(threads = 4) ?(on = ignore3) t oracle matrix =
       let len = Carton.Value.length value
       and bstr = Carton.Value.bigstring value
       and kind = Carton.Value.kind value in
-      let uid = oracle.Carton.identify ~kind ~off:0 ~len bstr
+      let uid = identify oracle.Carton.identify ~kind ~len bstr
       and crc = oracle.checksum ~cursor in
       on value uid >>= fun () ->
       matrix.(pos) <- Resolved_base { cursor; uid; crc; kind };
@@ -304,24 +309,36 @@ let config ?(threads = 4) ?(on_entry = ignorem) ?(on_object = ignore3)
   { threads= Some threads; ref_length; identify; on_entry; on_object }
 
 let compile ?(on = ignorem) ~identify ~digest_length seq =
-  let children = Hashtbl.create 0x7ff in
+  let children_by_offset = Hashtbl.create 0x7ff in
+  let children_by_uid = Hashtbl.create 0x7ff in
   let sizes : (int, Carton.Size.t ref) Hashtbl.t = Hashtbl.create 0x7ff in
   let where = Hashtbl.create 0x7ff in
   let crcs = Hashtbl.create 0x7ff in
   let is_base = Hashtbl.create 0x7ff in
-  let is_thin = ref false in
+  let index = Hashtbl.create 0x7ff in
+  let ref_index = Hashtbl.create 0x7ff in
   let hash = ref (String.make digest_length '\000') in
-  let update_size ~parent offset ~source ~target =
+  let update_size ~parent offset size =
     Log.debug (fun m ->
         m "Update the size for %08x (parent: %08x)" offset parent);
     let cell : Carton.Size.t ref = Hashtbl.find sizes parent in
-    (cell := Carton.Size.(max !cell (max source target)));
+    (cell := Carton.Size.(max !cell size));
     Hashtbl.add sizes offset cell
   in
   let new_child ~parent child =
-    match Hashtbl.find_opt children parent with
-    | None -> Hashtbl.add children parent [ child ]
-    | Some offsets -> Hashtbl.replace children parent (child :: offsets)
+    match parent with
+    | `Ofs parent -> begin
+        match Hashtbl.find_opt children_by_offset parent with
+        | None -> Hashtbl.add children_by_offset parent [ child ]
+        | Some offsets ->
+            Hashtbl.replace children_by_offset parent (child :: offsets)
+      end
+    | `Ref parent -> begin
+        match Hashtbl.find_opt children_by_uid parent with
+        | None -> Hashtbl.add children_by_uid parent [ child ]
+        | Some offsets ->
+            Hashtbl.replace children_by_uid parent (child :: offsets)
+      end
   in
   let number_of_objects = ref 0 in
   let pos = ref 0 in
@@ -342,29 +359,53 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         Hashtbl.add where offset !pos;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
-        | Carton.First_pass.Base _ ->
+        | Carton.First_pass.Base (_, uid) ->
             Hashtbl.add sizes offset (ref size);
             Hashtbl.add is_base !pos offset;
+            Hashtbl.add index uid offset;
             incr pos
         | Ofs { sub; source; target } ->
             Log.debug (fun m ->
                 m "new OBJ_OFS object at %08x (rel: %08x)" offset sub);
-            let abs_parent = offset - sub in
-            update_size ~parent:abs_parent offset ~source ~target;
-            Log.debug (fun m ->
-                m "new child for %08x at %08x" abs_parent offset);
-            new_child ~parent:abs_parent offset;
+            let parent = offset - sub in
+            update_size ~parent offset (Carton.Size.max source target);
+            Log.debug (fun m -> m "new child for %08x at %08x" parent offset);
+            new_child ~parent:(`Ofs parent) offset;
             incr pos
-        | Ref { target; _ } ->
-            is_thin := true;
-            Hashtbl.add sizes offset (ref target);
-            incr pos
+        | Ref { ptr; source; target; _ } ->
+            begin
+              match Hashtbl.find_opt index ptr with
+              | Some parent ->
+                  update_size ~parent offset (Carton.Size.max source target)
+              | None ->
+                  Hashtbl.add sizes offset (ref (Carton.Size.max source target))
+            end;
+            Hashtbl.add ref_index offset ptr;
+            new_child ~parent:(`Ref ptr) offset
       end
   in
   Lwt_seq.iter_p fn seq >|= fun () ->
+  Hashtbl.iter
+    (fun offset ptr ->
+      match Hashtbl.find_opt index ptr with
+      | Some parent ->
+          Log.debug (fun m ->
+              m "Update the size of %08x (parent: %08x, %a)" offset parent
+                Carton.Uid.pp ptr);
+          update_size ~parent offset !(Hashtbl.find sizes offset)
+      | None -> ())
+    ref_index;
   Log.debug (fun m -> m "%d object(s)" !number_of_objects);
-  let children ~cursor ~uid:_ =
-    Option.value ~default:[] (Hashtbl.find_opt children cursor)
+  let children ~cursor ~uid =
+    match
+      ( Hashtbl.find_opt children_by_offset cursor
+      , Hashtbl.find_opt children_by_uid uid )
+    with
+    | Some (_ :: _ as children), (Some [] | None) -> children
+    | (Some [] | None), Some (_ :: _ as children) -> children
+    | (None | Some []), (None | Some []) -> []
+    | Some lst0, Some lst1 ->
+        List.(sort_uniq Int.compare (rev_append lst0 lst1))
   in
   let where ~cursor = Hashtbl.find where cursor in
   let size ~cursor = !(Hashtbl.find sizes cursor) in
@@ -377,7 +418,6 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   ; size
   ; checksum
   ; is_base
-  ; is_thin= !is_thin
   ; number_of_objects= !number_of_objects
   ; hash= !hash
   }
@@ -387,6 +427,7 @@ type ctx = {
   ; allocate: int -> De.window
   ; ref_length: int
   ; digest: Carton.First_pass.digest
+  ; identify: Carton.identify
 }
 
 let of_stream_to_store ctx ~append stream =
@@ -460,8 +501,17 @@ let of_stream_to_store ctx ~append stream =
     | `End hash -> Lwt.return (Lwt_seq.Cons (`Hash hash, Lwt_seq.empty))
   in
   let decoder =
-    let { output; allocate; ref_length; digest } = ctx in
-    Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest `Manual
+    let {
+      output
+    ; allocate
+    ; ref_length
+    ; digest
+    ; identify= Carton.Identify identify
+    } =
+      ctx
+    in
+    Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest ~identify
+      `Manual
   in
   go decoder (String.empty, 0, 0)
 
@@ -478,7 +528,7 @@ let verify_from_stream
   let z = De.bigstring_create De.io_buffer_size in
   let seq =
     let allocate bits = De.make_window ~bits in
-    let ctx = { output= z; allocate; ref_length; digest } in
+    let ctx = { output= z; allocate; ref_length; digest; identify } in
     of_stream_to_store ctx ~append stream
   in
   let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in

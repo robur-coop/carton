@@ -11,7 +11,24 @@ let kind_of_string = function
   | "d" | "tag" -> `D
   | _ -> invalid_arg "kind_of_string"
 
-let entry_of_filename ~(identify : Carton.identify) ~kind filename =
+let git_identify =
+  let open Digestif in
+  let pp_kind ppf = function
+    | `A -> Fmt.string ppf "commit"
+    | `B -> Fmt.string ppf "tree"
+    | `C -> Fmt.string ppf "blob"
+    | `D -> Fmt.string ppf "tag"
+  in
+  let init kind (len : Carton.Size.t) =
+    let hdr = Fmt.str "%a %d\000" pp_kind kind (len :> int) in
+    let ctx = SHA1.empty in
+    SHA1.feed_string ctx hdr
+  in
+  let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
+  let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
+  { Carton.First_pass.init; feed; serialize }
+
+let entry_of_filename ~identify:(Carton.Identify gen) ~kind filename =
   if Sys.file_exists filename = false || Sys.is_directory filename then
     Fmt.failwith "Invalid source %s" filename;
   let kind = kind_of_string kind in
@@ -24,7 +41,12 @@ let entry_of_filename ~(identify : Carton.identify) ~kind filename =
       [| stat.Unix.st_size |]
   in
   let bstr = Bigarray.array1_of_genarray barr in
-  let uid = identify ~kind bstr in
+  let uid =
+    let len = Carton.Size.of_int_exn stat.Unix.st_size in
+    let ctx = gen.Carton.First_pass.init kind len in
+    let ctx = gen.Carton.First_pass.feed bstr ctx in
+    gen.Carton.First_pass.serialize ctx
+  in
   let meta = (kind, filename) in
   Cartonnage.Entry.make ~kind ~length:stat.Unix.st_size uid meta
 
@@ -147,22 +169,6 @@ module Stream = struct
   let to_dispenser t () = get t
 end
 
-let git_identify ~kind ?(off = 0) ?len bstr =
-  let open Digestif in
-  let default = Bigarray.Array1.dim bstr - off in
-  let len = Option.value ~default len in
-  let pp_kind ppf = function
-    | `A -> Fmt.string ppf "commit"
-    | `B -> Fmt.string ppf "tree"
-    | `C -> Fmt.string ppf "blob"
-    | `D -> Fmt.string ppf "tag"
-  in
-  let hdr = Fmt.str "%a %d\000" pp_kind kind len in
-  let ctx = SHA1.empty in
-  let ctx = SHA1.feed_string ctx hdr in
-  let ctx = SHA1.feed_bigstring ctx ~off ~len bstr in
-  SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) ctx
-
 let bar ~total =
   let open Progress.Line in
   let style = if Fmt.utf_8 Fmt.stdout then `UTF8 else `ASCII in
@@ -188,7 +194,7 @@ let with_reporter ~config ?total quiet =
 let run quiet progress without_progress header signature without_signature
     entries output =
   let ref_length = Digestif.SHA1.digest_size in
-  let identify = git_identify in
+  let identify = Carton.Identify git_identify in
   let ic, ic_finally =
     match entries with
     | Some entries ->
@@ -259,10 +265,10 @@ let existing_file =
 
 let entries =
   let doc = "The file which contains entries to PACK." in
-  Arg.(
-    value
-    & opt (some existing_file) None
-    & info [ "e"; "entries" ] ~doc ~docv:"FILE")
+  let open Arg in
+  value
+  & opt (some existing_file) None
+  & info [ "e"; "entries" ] ~doc ~docv:"FILE"
 
 let without_signature =
   let doc = "Don't generate a signature for the generated PACK file." in

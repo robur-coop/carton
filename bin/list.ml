@@ -1,14 +1,51 @@
 open Digestif
 
+let ( $ ) f g = fun x -> f (g x)
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let pp_ofs_delta ppf abs_offset = Fmt.pf ppf "Δ(%08x)" abs_offset
 let pp_ref_delta ppf ptr = Fmt.pf ppf "Δ(%a)" Carton.Uid.pp ptr
 
+let git_identify =
+  let pp_kind ppf = function
+    | `A -> Fmt.string ppf "commit"
+    | `B -> Fmt.string ppf "tree"
+    | `C -> Fmt.string ppf "blob"
+    | `D -> Fmt.string ppf "tag"
+  in
+  let init kind (len : Carton.Size.t) =
+    let hdr = Fmt.str "%a %d\000" pp_kind kind (len :> int) in
+    let ctx = SHA1.empty in
+    SHA1.feed_string ctx hdr
+  in
+  let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
+  let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
+  { Carton.First_pass.init; feed; serialize }
+
 let pp_kind ~offset ppf = function
-  | Carton.First_pass.Base `A -> Fmt.pf ppf "%a" Fmt.(styled `Blue string) "a"
-  | Base `B -> Fmt.pf ppf "%a" Fmt.(styled `Cyan string) "b"
-  | Base `C -> Fmt.pf ppf "%a" Fmt.(styled `Green string) "c"
-  | Base `D -> Fmt.pf ppf "%a" Fmt.(styled `Magenta string) "d"
+  | Carton.First_pass.Base (`A, uid) ->
+      Fmt.pf ppf "%a %a"
+        Fmt.(styled `Blue string)
+        "a"
+        Fmt.(styled `Yellow Carton.Uid.pp)
+        uid
+  | Base (`B, uid) ->
+      Fmt.pf ppf "%a %a"
+        Fmt.(styled `Cyan string)
+        "b"
+        Fmt.(styled `Yellow Carton.Uid.pp)
+        uid
+  | Base (`C, uid) ->
+      Fmt.pf ppf "%a %a"
+        Fmt.(styled `Green string)
+        "c"
+        Fmt.(styled `Yellow Carton.Uid.pp)
+        uid
+  | Base (`D, uid) ->
+      Fmt.pf ppf "%a %a"
+        Fmt.(styled `Magenta string)
+        "d"
+        Fmt.(styled `Yellow Carton.Uid.pp)
+        uid
   | Ofs { sub; _ } ->
       Fmt.pf ppf "%a" Fmt.(styled `Red pp_ofs_delta) (offset - sub)
   | Ref { ptr; _ } -> Fmt.pf ppf "%a" Fmt.(styled `Yellow pp_ref_delta) ptr
@@ -43,7 +80,8 @@ let run _ digest (_filename, seq) =
   let allocate bits = De.make_window ~bits in
   let ref_length = SHA1.digest_size in
   let seq =
-    Carton.First_pass.of_seq ~output ~allocate ~ref_length ~digest seq
+    Carton.First_pass.of_seq ~output ~allocate ~ref_length ~digest
+      ~identify:git_identify seq
   in
   let rec go seq =
     match Seq.uncons seq with

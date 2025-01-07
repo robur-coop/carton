@@ -4,10 +4,4 @@
  (foreign_stubs
   (language c)
   (names pagesize))
- (libraries
-  hxd.string
-  fpath
-  miou.unix
-  carton
-  carton.classeur
-  carton.cartonnage))
+ (libraries fpath miou.unix carton carton.classeur carton.cartonnage))

@@ -3,20 +3,21 @@ open Digestif
 let ( $ ) f g x = f (g x)
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 
-let git_identify ~kind ?(off = 0) ?len bstr =
-  let default = Bigarray.Array1.dim bstr - off in
-  let len = Option.value ~default len in
+let git_identify =
   let pp_kind ppf = function
     | `A -> Fmt.string ppf "commit"
     | `B -> Fmt.string ppf "tree"
     | `C -> Fmt.string ppf "blob"
     | `D -> Fmt.string ppf "tag"
   in
-  let hdr = Fmt.str "%a %d\000" pp_kind kind len in
-  let ctx = SHA1.empty in
-  let ctx = SHA1.feed_string ctx hdr in
-  let ctx = SHA1.feed_bigstring ctx ~off ~len bstr in
-  SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) ctx
+  let init kind (len : Carton.Size.t) =
+    let hdr = Fmt.str "%a %d\000" pp_kind kind (len :> int) in
+    let ctx = SHA1.empty in
+    SHA1.feed_string ctx hdr
+  in
+  let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
+  let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
+  { Carton.First_pass.init; feed; serialize }
 
 let entries_of_pack cfg digest pack =
   let matrix, hash =
@@ -113,7 +114,7 @@ let run _quiet threads pagesize digest pack output =
     if Sys.file_exists (Fpath.to_string output) then `Verify else `Generate
   in
   let ref_length = SHA1.digest_size in
-  let identify = git_identify in
+  let identify = Carton.Identify git_identify in
   let cfg = Carton_miou_unix.config ~threads ~pagesize ~ref_length identify in
   let result =
     match action with
