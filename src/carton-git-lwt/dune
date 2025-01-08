@@ -1,0 +1,4 @@
+(library
+ (name carton_git_lwt)
+ (public_name carton-git-lwt)
+ (libraries carton-lwt digestif))
