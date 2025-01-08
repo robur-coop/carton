@@ -59,6 +59,15 @@ module Size : sig
 end
 
 module Uid : sig
+  (** An object can be identified by a unique identifier that needs to be
+      calculated by an algorithm such as a hash algorithm. These identifiers can
+      be used to refer to a possible source when we have a
+      {!const:First_pass.Ref} entry.
+
+      This means that all the Uids used {b must} have strictly the same size,
+      which corresponds in particular to [ref_length] — the value required to
+      decode a PACK file. *)
+
   type t = private string
 
   val unsafe_of_string : string -> t
@@ -264,6 +273,9 @@ module First_pass : sig
       of the PACK file. *)
 
   val src_rem : decoder -> int
+  (** [src_rem] returns how many byte(s) are not yet processed by the given
+      [decoder]. *)
+
   val src : decoder -> De.bigstring -> int -> int -> decoder
 
   val of_seq :
@@ -463,9 +475,7 @@ val size_of_offset :
 (** [size_of_uid pack ?visited ~cursor size] returns the size of the buffers
     (see {!module:Blob}s) required to extract the object located at [cursor]
     from the PACK file. This does {b not} correspond to the size of the object.
-
-    The given [pack] must be able to recognize the object's position based on
-    its unique identifier. *)
+*)
 
 val size_of_uid : 'fd t -> ?visited:Visited.t -> uid:Uid.t -> Size.t -> Size.t
 (** [size_of_uid pack ?visited ~uid size] returns the size of the buffers (see
@@ -499,9 +509,8 @@ module Value : sig
 end
 
 val of_offset : 'fd t -> Blob.t -> cursor:int -> Value.t
-(** [of_offset pack blob ~cursor] is the object at the offset [cursor] into
-    [pack]. The function is not {i tail-recursive}. It discovers at each step if
-    the object depends on another one (see [OBJ_REF_DELTA] or [OBJ_OFS_DELTA]).
+(** [of_offset pack blob ~cursor] is the object at the offset [cursor] into the
+    given [pack].
 
     {b Note}: This function does not allocate larges resources (or, at least,
     only the given [allocate] function to {!type:t} is able to allocate a large
@@ -516,7 +525,11 @@ val of_offset : 'fd t -> Blob.t -> cursor:int -> Value.t
 
 val of_uid : 'fd t -> Blob.t -> uid:Uid.t -> Value.t
 (** As {!of_offset}, [of_uid pack block ~uid] is the object identified by [uid]
-    into [pack]. *)
+    into the given [pack].
+
+    The given [pack] must be able to recognize the object's position based on
+    its unique identifier. In other words, [pack] must be constructed with an
+    exhaustive [where] function for all the identifiers in the PACK file. *)
 
 (** {3:path Path of object.}
 
@@ -541,32 +554,10 @@ module Path : sig
 end
 
 val path_of_offset : ?max_depth:int -> 'fd t -> cursor:int -> Path.t
-(** [path_of_offset sched ~map t ~cursor] is that {!path} of the given object
-    available at [cursor].
-
-    {b Note.} This function can try to partially inflate objects. So, this
-    function can use internal buffers and it is not {i thread-safe}.
-
-    {b Note.} This function can try to {i look-up} an other object if it
-    extracts an [OBJ_REF_DELTA] object. However, if we suppose that we process a
-    PACKv2, an [OBJ_REF_DELTA] {i usually} points to an external object (see
-    {i thin}-pack). *)
-
 val path_of_uid : 'fd t -> Uid.t -> Path.t
-(** [path_of_uid sched ~map t uid] is the {!path} of the given object identified
-    by [uid] into [t].
-
-    {b Note.} As {!size_of_offset}, this function can inflate objects and use
-    internal buffers and it is not {i thread-safe}.
-
-    {b Note.} Despite {!size_of_offset}, this function {b look-up} the object
-    from the given reference. *)
 
 val of_offset_with_path :
   'fd t -> path:Path.t -> Blob.t -> cursor:int -> Value.t
-(** [of_offset_with_path sched ~map t ~path raw ~cursor] is the object available
-    at [cursor] into [t]. This function is {i tail-recursive} and bound to the
-    given [path]. *)
 
 val of_offset_with_source : 'fd t -> Value.t -> cursor:int -> Value.t
 (** [of_offset_with_source ~map t ~path source ~cursor] is the object available
