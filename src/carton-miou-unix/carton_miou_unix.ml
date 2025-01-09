@@ -640,11 +640,17 @@ let should_we_apply ~ref_length:_ ~source entry =
   let size_guessed =
     match Target.patch entry with
     | None -> Target.length entry / 3
-    | Some patch -> Patch.length patch
+    | Some patch -> Patch.length patch / 3
   in
   if Source.length source < Target.length entry then false
   else
     let diff = Source.length source - Target.length entry in
+    Log.debug (fun m ->
+        m
+          "source: %d byte(s), target: %d byte(s), size_guessed: %d byte(s) \
+           (patch: %b)"
+          (Source.length source) (Target.length entry) size_guessed
+          (Option.is_some (Target.patch entry)));
     diff < size_guessed
 
 let apply ~ref_length ~load ~window:t entry =

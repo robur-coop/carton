@@ -147,11 +147,27 @@ module Target = struct
       in
       Duff.delta index ~source ~target
     in
+    Log.debug (fun m ->
+        let n =
+          List.fold_left
+            (fun a -> function Duff.Copy (_, len) -> a + len | _ -> a)
+            0 hunks
+        in
+        m "%d byte(s) saved by libXdiff" n);
     let source = Source.uid source in
     let patch =
       Patch.Patch { hunks; depth; source; source_length; target_length }
     in
-    t.patch <- Some patch
+    match t.patch with
+    | Some previous ->
+        if Patch.length previous > Patch.length patch then t.patch <- Some patch
+    | None ->
+        let copy =
+          List.fold_left
+            (fun a -> function Duff.Copy (_, len) -> a + len | _ -> a)
+            0 hunks
+        in
+        if copy > 0 then t.patch <- Some patch
 
   let uid { entry; _ } = Entry.uid entry
   let length { entry; _ } = Entry.length entry

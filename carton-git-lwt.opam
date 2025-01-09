@@ -16,6 +16,7 @@ depends: [
   "dune" {>= "3.11.0"}
   "carton" {= version}
   "cachet-lwt"
+  "carton-lwt" {= version}
   "alcotest-lwt" {>= "1.8.0" & with-test}
   "digestif" {>= "1.2.0"}
 ]
