@@ -29,6 +29,7 @@ build: [
   ["dune" "runtest" "-p" name "-j" jobs] {with-test}
 ]
 dev-repo: "git+https://github.com/robur-coop/carton.git"
+x-maintenance-intent: [ "(latest)" ]
 
 pin-depends: [
   [ "cachet.dev" "git+https://github.com/robur-coop/cachet.git#8796b18ae7e4ecab25954ba188542951f36fdc0a" ]
