@@ -14,7 +14,7 @@ bug-reports: "https://git.robur.coop/robur/carton/issues"
 depends: [
   "ocaml" {>= "4.08.0"}
   "dune" {>= "3.11.0"}
-  "cachet"
+  "cachet" {>= "0.0.2"}
   "duff" {>= "0.5"}
   "optint"
   "checkseum"

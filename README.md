@@ -51,7 +51,7 @@ tree:         0000000c
 ...
 $ mkdir pack
 $ carton explode "pack/%s/%s" new.pack > entries.pack
-$ carton make --entries $(wc -l entries.pack) entries.pack new.pack
+$ carton make -n $(cat entries.pack | wc -l) -e entries.pack new.pack
 $ carton index new.pack
 $ carton get new.idx 17c2336bccb3b4fbd6eb430bf5fe1c4f1f8184e3
 ...

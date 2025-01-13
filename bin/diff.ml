@@ -15,6 +15,13 @@ let deflated_diff source target oc =
   let index = Duff.make src in
   let duff = Duff.delta index ~source:src ~target:dst in
   Logs.debug (fun m -> m "%d hunk(s) generated" (Stdlib.List.length duff));
+  Logs.debug (fun m ->
+      let saved =
+        Stdlib.List.fold_left
+          (fun a -> function Duff.Copy (_, len) -> a + len | _ -> a)
+          0 duff
+      in
+      m "%d byte(s) saved" saved);
   (* NOTE(dinosaure): a pretty special case. *)
   begin
     match duff with
