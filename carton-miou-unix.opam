@@ -30,7 +30,3 @@ build: [
 ]
 dev-repo: "git+https://github.com/robur-coop/carton.git"
 x-maintenance-intent: [ "(latest)" ]
-
-pin-depends: [
-  [ "miou.dev" "git+https://github.com/robur-coop/miou.git#01b75212e595d154a0f24387e0fdde8cf86254f2" ]
-]

@@ -27,7 +27,3 @@ build: [
 ]
 dev-repo: "git+https://github.com/robur-coop/carton.git"
 x-maintenance-intent: [ "(latest)" ]
-
-pin-depends: [
-  [ "cachet-lwt.dev" "git+https://github.com/robur-coop/cachet.git#977e28a03616f0e89170d6b1cc067cdffa4e9cab" ]
-]
