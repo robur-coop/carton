@@ -2,4 +2,5 @@
  (name test)
  (deps bomb.pack ref.pack)
  (enabled_if %{arch_sixtyfour})
+ (package carton-lwt)
  (libraries logs.fmt digestif alcotest-lwt carton-lwt))

@@ -14,11 +14,11 @@ bug-reports: "https://git.robur.coop/robur/carton/issues"
 depends: [
   "ocaml" {>= "4.08.0"}
   "dune" {>= "3.11.0"}
-  "cachet"
+  "cachet" {>= "0.0.2"}
   "duff" {>= "0.5"}
   "optint"
   "checkseum"
-  "decompress"
+  "decompress" {>= "1.5.0"}
   "logs"
   "ohex"
 ]
@@ -30,7 +30,3 @@ build: [
 ]
 dev-repo: "git+https://github.com/robur-coop/carton.git"
 x-maintenance-intent: [ "(latest)" ]
-
-pin-depends: [
-  [ "cachet.dev" "git+https://github.com/robur-coop/cachet.git#8796b18ae7e4ecab25954ba188542951f36fdc0a" ]
-]
