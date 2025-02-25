@@ -99,3 +99,10 @@ Other parameters such as GC can also be considered.
 However, it's worth noting that Carton isn't that slow! What's more, even if it
 would be difficult to approach the performance of a C program, OCaml gives us
 certain guarantees such as typing and bound-checking.
+
+## Funding
+
+This project received funding through [NGI Zero Core](https://nlnet.nl/core), a
+fund established by [NLnet](https://nlnet.nl) with financial support from the
+European Commission's [Next Generation Internet](https://ngi.eu) program. Learn
+more at the [NLnet project page](https://nlnet.nl/project/PTT).
