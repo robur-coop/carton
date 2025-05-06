@@ -22,25 +22,25 @@ let git_identify =
   { Carton.First_pass.init; feed; serialize }
 
 let pp_kind ~offset ppf = function
-  | Carton.First_pass.Base (`A, uid) ->
+  | Carton.First_pass.Base (`A, uid, _) ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Blue string)
         "a"
         Fmt.(styled `Yellow Carton.Uid.pp)
         uid
-  | Base (`B, uid) ->
+  | Base (`B, uid, _) ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Cyan string)
         "b"
         Fmt.(styled `Yellow Carton.Uid.pp)
         uid
-  | Base (`C, uid) ->
+  | Base (`C, uid, _) ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Green string)
         "c"
         Fmt.(styled `Yellow Carton.Uid.pp)
         uid
-  | Base (`D, uid) ->
+  | Base (`D, uid, _) ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Magenta string)
         "d"

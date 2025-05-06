@@ -351,7 +351,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         Hashtbl.add where offset !pos;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
-        | Carton.First_pass.Base (_, uid) ->
+        | Carton.First_pass.Base (_, uid, _) ->
             Hashtbl.add sizes offset (ref size);
             Hashtbl.add is_base !pos offset;
             Hashtbl.add index uid offset;

@@ -120,7 +120,7 @@ module First_pass = struct
   type gen = Gen : 'ctx base_state -> gen
 
   type kind =
-    | Base of Kind.t * Uid.t
+    | Base of Kind.t * Uid.t * string list
     | Ofs of { sub: int; source: int; target: int; inflate: string list }
     | Ref of { ptr: string; source: int; target: int; inflate: string list }
 
@@ -217,7 +217,7 @@ module First_pass = struct
         { entry with kind= Ofs { sub; source; target; inflate } }
     | Ref { ptr; source; target; _ } ->
         { entry with kind= Ref { ptr; source; target; inflate } }
-    | _ -> entry
+    | Base (kind, hash, _) -> { entry with kind= Base (kind, hash, inflate) }
 
   let source entry =
     match entry.kind with
@@ -232,7 +232,7 @@ module First_pass = struct
   let inflate entry =
     match entry.kind with
     | Ofs { inflate; _ } | Ref { inflate; _ } -> inflate
-    | _ -> assert false
+    | Base (_, _, inflate) -> inflate
 
   let number_of_objects { number_of_objects; _ } = number_of_objects
   let version { version; _ } = version
@@ -478,7 +478,7 @@ module First_pass = struct
         let entry =
           {
             offset= Int64.to_int decoder.consumed
-          ; kind= Base (kind, "")
+          ; kind= Base (kind, "", [])
           ; size= !size
           ; consumed= 0
           ; crc
@@ -574,13 +574,14 @@ module First_pass = struct
            [decompress] returns an error - because we fill at the beginning the
            input buffer with [0] (then, we reach end-of-input). *)
         peek_15 k_header decoder
-    | Inflate ({ kind= Base (kind, _); crc; _ } as entry) ->
-        let rec go identify zlib =
+    | Inflate ({ kind= Base (kind, _, inflate); crc; _ } as entry) ->
+        let rec go identify inflate zlib =
           match Zl.Inf.decode zlib with
           | `Await zlib ->
               let len = src_rem decoder - Zl.Inf.src_rem zlib in
               let crc = crc_decoder decoder ~len crc in
               let decoder = digest_decoder decoder ~len in
+              let entry = with_inflate inflate entry in
               refill decode
                 {
                   decoder with
@@ -595,13 +596,14 @@ module First_pass = struct
                 Bigarray.Array1.dim decoder.output - Zl.Inf.dst_rem zlib
               in
               let bstr = Bigarray.Array1.sub decoder.output 0 len in
+              let str = Zh.bigstring_sub_string bstr ~off:0 ~len in
               let identify =
                 match identify with
                 | Gen (Compute_base (ctx, gen)) ->
                     Gen (Compute_base (gen.feed bstr ctx, gen))
                 | Gen (Epsilon _) -> assert false
               in
-              go identify (Zl.Inf.flush zlib)
+              go identify (str :: inflate) (Zl.Inf.flush zlib)
           | `Malformed err -> malformedf "Pack.decode.inflate (base): %s" err
           | `End zlib ->
               let len =
@@ -637,11 +639,11 @@ module First_pass = struct
                 Int64.(to_int (sub decoder.consumed (of_int entry.offset)))
               in
               let entry =
-                { entry with kind= Base (kind, uid); consumed; crc }
+                { entry with kind= Base (kind, uid, inflate); consumed; crc }
               in
               `Entry (entry, decoder)
         in
-        go decoder.identify decoder.zlib
+        go decoder.identify inflate decoder.zlib
     | Inflate ({ kind= Ofs _ | Ref _; crc; _ } as entry) ->
         let source = ref (source entry) in
         let target = ref (target entry) in

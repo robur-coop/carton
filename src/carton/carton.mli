@@ -192,7 +192,7 @@ module First_pass : sig
       source object (as far as Git is concerned, this identifier corresponds to
       what [git hash-object] can give). *)
   type kind =
-    | Base of Kind.t * Uid.t
+    | Base of Kind.t * Uid.t * string list
     | Ofs of { sub: int; source: Size.t; target: Size.t; inflate: string list }
     | Ref of {
           ptr: Uid.t
