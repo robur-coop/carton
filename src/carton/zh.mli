@@ -1,3 +1,5 @@
+val bigstring_sub_string : Zl.bigstring -> off:int -> len:int -> string
+
 module N : sig
   type encoder
   type dst = [ `Channel of out_channel | `Buffer of Buffer.t | `Manual ]

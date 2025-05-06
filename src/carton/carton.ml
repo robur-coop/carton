@@ -121,8 +121,8 @@ module First_pass = struct
 
   type kind =
     | Base of Kind.t * Uid.t
-    | Ofs of { sub: int; source: int; target: int }
-    | Ref of { ptr: string; source: int; target: int }
+    | Ofs of { sub: int; source: int; target: int; inflate: string list }
+    | Ref of { ptr: string; source: int; target: int; inflate: string list }
 
   let digest bstr ?(off = 0) ?len
       (Digest (({ feed_bigstring; _ } as hash), ctx)) =
@@ -197,8 +197,26 @@ module First_pass = struct
 
   let with_source source entry =
     match entry.kind with
-    | Ofs { sub; target; _ } -> { entry with kind= Ofs { sub; source; target } }
-    | Ref { ptr; target; _ } -> { entry with kind= Ref { ptr; source; target } }
+    | Ofs { sub; target; inflate; _ } ->
+        { entry with kind= Ofs { sub; source; target; inflate } }
+    | Ref { ptr; target; inflate; _ } ->
+        { entry with kind= Ref { ptr; source; target; inflate } }
+    | _ -> entry
+
+  let with_target target entry =
+    match entry.kind with
+    | Ofs { sub; source; inflate; _ } ->
+        { entry with kind= Ofs { sub; source; target; inflate } }
+    | Ref { ptr; source; inflate; _ } ->
+        { entry with kind= Ref { ptr; source; target; inflate } }
+    | _ -> entry
+
+  let with_inflate inflate entry =
+    match entry.kind with
+    | Ofs { sub; source; target; _ } ->
+        { entry with kind= Ofs { sub; source; target; inflate } }
+    | Ref { ptr; source; target; _ } ->
+        { entry with kind= Ref { ptr; source; target; inflate } }
     | _ -> entry
 
   let source entry =
@@ -211,11 +229,10 @@ module First_pass = struct
     | Ofs { target; _ } | Ref { target; _ } -> target
     | _ -> assert false
 
-  let with_target target entry =
+  let inflate entry =
     match entry.kind with
-    | Ofs { sub; source; _ } -> { entry with kind= Ofs { sub; source; target } }
-    | Ref { ptr; source; _ } -> { entry with kind= Ref { ptr; source; target } }
-    | _ -> entry
+    | Ofs { inflate; _ } | Ref { inflate; _ } -> inflate
+    | _ -> assert false
 
   let number_of_objects { number_of_objects; _ } = number_of_objects
   let version { version; _ } = version
@@ -375,7 +392,7 @@ module First_pass = struct
     let entry =
       {
         offset
-      ; kind= Ref { ptr; source= -1; target= -1 }
+      ; kind= Ref { ptr; source= -1; target= -1; inflate= [] }
       ; size
       ; consumed= 0
       ; crc
@@ -410,7 +427,7 @@ module First_pass = struct
     let entry =
       {
         offset
-      ; kind= Ofs { sub= !base_offset; source= -1; target= -1 }
+      ; kind= Ofs { sub= !base_offset; source= -1; target= -1; inflate= [] }
       ; size
       ; consumed= 0
       ; crc
@@ -628,6 +645,7 @@ module First_pass = struct
     | Inflate ({ kind= Ofs _ | Ref _; crc; _ } as entry) ->
         let source = ref (source entry) in
         let target = ref (target entry) in
+        let chunks = ref (inflate entry) in
         let first = ref (!source = -1 && !target = -1) in
         let rec go zlib =
           match Zl.Inf.decode zlib with
@@ -636,6 +654,7 @@ module First_pass = struct
               let crc = crc_decoder decoder ~len crc in
               let entry = with_source !source entry in
               let entry = with_target !target entry in
+              let entry = with_inflate !chunks entry in
               let decoder = digest_decoder decoder ~len in
               refill decode
                 {
@@ -646,6 +665,9 @@ module First_pass = struct
                 ; state= Inflate { entry with crc }
                 }
           | `Flush zlib ->
+              let len = bstr_length decoder.output - Zl.Inf.dst_rem zlib in
+              let str = Zh.bigstring_sub_string decoder.output ~off:0 ~len in
+              chunks := str :: !chunks;
               if !first then begin
                 let len = bstr_length decoder.output - Zl.Inf.dst_rem zlib in
                 let x, src_len = variable_length decoder.output 0 len in

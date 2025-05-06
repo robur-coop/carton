@@ -58,11 +58,6 @@ let bigstring_to_string bstr =
   unsafe_blit_to_bytes bstr 0 buf 0 len;
   Bytes.unsafe_to_string buf
 
-let bigstring_substring bstr off len =
-  let buf = Bytes.create len in
-  unsafe_blit_to_bytes bstr off buf 0 len;
-  Bytes.unsafe_to_string buf
-
 let output_bigstring oc buf off len =
   (* XXX(dinosaure): stupidly slow! *)
   let v = Bigarray.Array1.sub buf off len in
@@ -428,12 +423,12 @@ module R = struct
 
   type decoder = {
       src: src
-    ; mutable i: bigstring
+    ; mutable i: bytes
     ; mutable i_pos: int
     ; mutable i_len: int
     ; mutable t_len: int
     ; mutable t_need: int
-    ; t_tmp: bigstring
+    ; t_tmp: bytes
     ; mutable src_len: int
     ; mutable dst_len: int
     ; mutable s: state
@@ -450,8 +445,12 @@ module R = struct
 
   and state = Header | Cmd | Cp of int | It of int
 
+  let invalid_bounds off len str =
+    invalid_argf "H.R: Out of bounds (off: %d, len: %d, real-len: %d)" off len
+      (String.length str)
+
   let eoi decoder =
-    decoder.i <- bigstring_empty;
+    decoder.i <- Bytes.empty;
     decoder.i_pos <- 0;
     decoder.i_len <- min_int
 
@@ -465,11 +464,10 @@ module R = struct
     decoder.t_need <- n
 
   let src decoder src j l =
-    if j < 0 || l < 0 || j + l > bigstring_length src then
-      invalid_bounds j l src;
+    if j < 0 || l < 0 || j + l > String.length src then invalid_bounds j l src;
     if l == 0 then eoi decoder
     else begin
-      decoder.i <- src;
+      decoder.i <- Bytes.unsafe_of_string src;
       decoder.i_pos <- j;
       decoder.i_len <- j + l - 1
     end
@@ -478,8 +476,8 @@ module R = struct
     match decoder.src with
     | `String _ -> eoi decoder; k decoder
     | `Channel ic ->
-        let res = input_bigstring ic decoder.i 0 (bigstring_length decoder.i) in
-        src decoder decoder.i 0 res;
+        let res = Stdlib.input ic decoder.i 0 (Bytes.length decoder.i) in
+        src decoder (Bytes.unsafe_to_string decoder.i) 0 res;
         k decoder
     | `Manual ->
         decoder.k <- k;
@@ -487,7 +485,7 @@ module R = struct
 
   let rec t_fill k decoder =
     let blit decoder len =
-      unsafe_blit decoder.i decoder.i_pos decoder.t_tmp decoder.t_len len;
+      Bytes.blit decoder.i decoder.i_pos decoder.t_tmp decoder.t_len len;
       decoder.i_pos <- decoder.i_pos + len;
       decoder.t_len <- decoder.t_len + len
     in
@@ -508,6 +506,22 @@ module R = struct
     | It len -> len
     | _ -> assert false
 
+  let variable_length buf off top =
+    let p = ref off in
+    let i = ref 0 in
+    let len = ref 0 in
+    while
+      let cmd = Bytes.get_uint8 buf !p in
+      incr p;
+      len := !len lor ((cmd land 0x7f) lsl !i);
+      i := !i + 7;
+      cmd land 0x80 != 0 && !p <= top
+    do
+      ()
+    done;
+    (!p - off, !len)
+  [@@inline]
+
   let rec cp decoder =
     let[@warning "-8"] (Cp command) = decoder.s in
     let p = ref (if decoder.t_len > 0 then 0 else decoder.i_pos) in
@@ -515,31 +529,31 @@ module R = struct
     let cp_off = ref 0 in
     let cp_len = ref 0 in
     if command land 0x01 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := v;
       incr p);
     if command land 0x02 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 8);
       incr p);
     if command land 0x04 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 16);
       incr p);
     if command land 0x08 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 24);
       incr p);
     if command land 0x10 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_len := v;
       incr p);
     if command land 0x20 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_len := !cp_len lor (v lsl 8);
       incr p);
     if command land 0x40 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_len := !cp_len lor (v lsl 16);
       incr p);
     if !cp_len == 0 then cp_len := 0x10000;
@@ -551,20 +565,20 @@ module R = struct
   and it decoder =
     let[@warning "-8"] (It len) = decoder.s in
     if decoder.t_len > 0 then begin
-      let str = bigstring_substring decoder.t_tmp 0 len in
+      let str = Bytes.sub_string decoder.t_tmp 0 len in
       decoder.s <- Cmd;
       decoder.k <- decode_k;
       `Insert str
     end
     else begin
-      let str = bigstring_substring decoder.i decoder.i_pos len in
+      let str = Bytes.sub_string decoder.i decoder.i_pos len in
       decoder.s <- Cmd;
       decoder.k <- decode_k;
       `Insert str
     end
 
   and cmd decoder =
-    let c = unsafe_get_uint8 decoder.i decoder.i_pos in
+    let c = Bytes.get_uint8 decoder.i decoder.i_pos in
     if c == 0 then malformedf "Invalid delta code (%02x)" c
     else begin
       decoder.s <- (if c land 0x80 != 0 then Cp c else It c);
@@ -585,10 +599,10 @@ module R = struct
           if rem < 2 then invalid_argf "Not enough space";
           (* TODO: [malformedf]? *)
           let x, src_len =
-            M.variable_length decoder.i decoder.i_pos decoder.i_len
+            variable_length decoder.i decoder.i_pos decoder.i_len
           in
           let y, dst_len =
-            M.variable_length decoder.i (decoder.i_pos + x) decoder.i_len
+            variable_length decoder.i (decoder.i_pos + x) decoder.i_len
           in
           decoder.i_pos <- decoder.i_pos + x + y;
           decoder.src_len <- src_len;
@@ -615,9 +629,9 @@ module R = struct
   let decoder src =
     let i, i_pos, i_len =
       match src with
-      | `Manual -> (bigstring_empty, 1, 0)
-      | `String x -> (bigstring_of_string x, 0, String.length x - 1)
-      | `Channel _ -> (bigstring_create io_buffer_size, 1, 0)
+      | `Manual -> (Bytes.empty, 1, 0)
+      | `String x -> (Bytes.unsafe_of_string x, 0, String.length x - 1)
+      | `Channel _ -> (Bytes.create io_buffer_size, 1, 0)
     in
     {
       src
@@ -626,12 +640,34 @@ module R = struct
     ; i_len
     ; t_len= 0
     ; t_need= 0
-    ; t_tmp= bigstring_create 128
+    ; t_tmp= Bytes.create 128
     ; src_len= 0
     ; dst_len= 0
     ; s= Header
     ; k= decode_k
     }
+
+  let of_seq seq =
+   fun () ->
+    let decoder = decoder `Manual in
+    let rec go seq =
+      match decode decoder with
+      | `Await -> begin
+          match Seq.uncons seq with
+          | Some (str, seq) ->
+              src decoder str 0 (String.length str);
+              go seq
+          | None ->
+              src decoder String.empty 0 0;
+              go seq
+        end
+      | (`Header _ | `Copy _ | `Insert _) as value ->
+          let next () = go seq in
+          Seq.Cons (value, next)
+      | `End -> Seq.Nil
+      | `Malformed err -> failwith err
+    in
+    go seq
 end
 
 [@@@warning "-69"]

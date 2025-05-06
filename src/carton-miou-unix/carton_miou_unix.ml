@@ -265,7 +265,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
             Hashtbl.add sizes offset (ref size);
             Hashtbl.add is_base pos offset;
             Hashtbl.add index uid offset
-        | Ofs { sub; source; target } ->
+        | Ofs { sub; source; target; _ } ->
             Log.debug (fun m ->
                 m "new OBJ_OFS object at %08x (rel: %08x)" offset sub);
             let abs_parent = offset - sub in

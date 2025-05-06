@@ -35,12 +35,16 @@ module R : sig
 
   type decoder
 
-  val src : decoder -> bigstring -> int -> int -> unit
+  val src : decoder -> string -> int -> int -> unit
   val src_rem : decoder -> int
   val src_len : decoder -> int
   val dst_len : decoder -> int
   val decode : decoder -> decode
   val decoder : src -> decoder
+
+  val of_seq :
+       string Seq.t
+    -> [ `Header of int * int | `Copy of int * int | `Insert of string ] Seq.t
 end
 
 module N : sig

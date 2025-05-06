@@ -193,8 +193,13 @@ module First_pass : sig
       what [git hash-object] can give). *)
   type kind =
     | Base of Kind.t * Uid.t
-    | Ofs of { sub: int; source: Size.t; target: Size.t }
-    | Ref of { ptr: Uid.t; source: Size.t; target: Size.t }
+    | Ofs of { sub: int; source: Size.t; target: Size.t; inflate: string list }
+    | Ref of {
+          ptr: Uid.t
+        ; source: Size.t
+        ; target: Size.t
+        ; inflate: string list
+      }
 
   (** {2 A delta-object, an object which requires a source.}
 
