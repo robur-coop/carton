@@ -4,6 +4,7 @@
  (public_name carton)
  (wrapped false)
  (libraries
+  bstr
   ohex
   cachet
   duff

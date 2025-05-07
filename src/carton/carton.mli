@@ -21,8 +21,6 @@
 module H = H
 module Zh = Zh
 
-val bigstring_of_string : string -> Cachet.bigstring
-
 module Kind : sig
   (** A PACK file contains several types of object. According to Git, it
       contains commits ([`A]), trees ([`B]), blobs ([`C]) and tags ([`D]).
@@ -103,7 +101,7 @@ end
 module First_pass : sig
   type 'ctx hash = {
       feed_bytes: bytes -> off:int -> len:int -> 'ctx -> 'ctx
-    ; feed_bigstring: De.bigstring -> 'ctx -> 'ctx
+    ; feed_bigstring: Bstr.t -> 'ctx -> 'ctx
     ; serialize: 'ctx -> string
     ; length: int
   }
@@ -136,7 +134,7 @@ module First_pass : sig
 
   type 'ctx identify = {
       init: Kind.t -> Size.t -> 'ctx
-    ; feed: De.bigstring -> 'ctx -> 'ctx
+    ; feed: Bstr.t -> 'ctx -> 'ctx
     ; serialize: 'ctx -> Uid.t
   }
   (** An object stored in a PACK file can be identified by a unique reference.
@@ -192,7 +190,7 @@ module First_pass : sig
       source object (as far as Git is concerned, this identifier corresponds to
       what [git hash-object] can give). *)
   type kind =
-    | Base of Kind.t * Uid.t
+    | Base of Kind.t
     | Ofs of { sub: int; source: Size.t; target: Size.t }
     | Ref of { ptr: Uid.t; source: Size.t; target: Size.t }
 
@@ -223,6 +221,7 @@ module First_pass : sig
           (** Length of the deflated object (as it is into the PACK file). *)
     ; crc: Optint.t
           (** Check-sum of the entry (header plus the deflated object). *)
+    ; number: int
   }
   (** Type of a PACK entries.
 
@@ -235,23 +234,23 @@ module First_pass : sig
   type decoder
   (** The type for decoders. *)
 
-  type src = [ `Channel of in_channel | `String of string | `Manual ]
+  type src = [ `String of string | `Manual ]
   (** The type for input sources. With a [`Manual] source the client must
       provide input with {!val:src}. *)
 
   type decode =
     [ `Await of decoder
     | `Peek of decoder
+    | `Inflate of string * decoder
     | `Entry of entry * decoder
     | `End of string
     | `Malformed of string ]
 
   val decoder :
-       output:De.bigstring
+       output:Bstr.t
     -> allocate:(int -> De.window)
     -> ref_length:int
     -> digest:digest
-    -> identify:'ctx identify
     -> src
     -> decoder
 
@@ -268,6 +267,8 @@ module First_pass : sig
   (** [counter_of_objects decoder] returns the actual entry processed by the
       decoder. *)
 
+  val kind : decoder -> (Kind.t * int) option
+
   val hash : decoder -> digest
   (** [hash decoder] returns the actual (and computed by the decoder) signature
       of the PACK file. *)
@@ -276,16 +277,19 @@ module First_pass : sig
   (** [src_rem] returns how many byte(s) are not yet processed by the given
       [decoder]. *)
 
-  val src : decoder -> De.bigstring -> int -> int -> decoder
+  val src : decoder -> Bstr.t -> int -> int -> decoder
 
   val of_seq :
-       output:De.bigstring
+       output:Bstr.t
     -> allocate:(int -> De.window)
     -> ref_length:int
     -> digest:digest
-    -> identify:'ctx identify
     -> string Seq.t
-    -> [ `Number of int | `Entry of entry | `Hash of string ] Seq.t
+    -> [ `Number of int
+       | `Inflate of (Kind.t * int) option * string
+       | `Entry of entry
+       | `Hash of string ]
+       Seq.t
   (** [of_seq ~output ~allocate ~ref_length ~digest seq] analyses a PACK stream
       given by [seq] and returns a stream of all the entries in the given PACK
       stream as well as the final signature of the PACK stream. Several values
@@ -362,7 +366,7 @@ val make :
   -> ?cachesize:int
   -> map:'fd Cachet.map
   -> 'fd
-  -> z:Zl.bigstring
+  -> z:Bstr.t
   -> allocate:(int -> Zl.window)
   -> ref_length:int
   -> (Uid.t -> int)
@@ -390,7 +394,7 @@ val make :
 
 val of_cache :
      'fd Cachet.t
-  -> z:Zl.bigstring
+  -> z:Bstr.t
   -> allocate:(int -> Zl.window)
   -> ref_length:int
   -> (Uid.t -> int)
@@ -412,7 +416,7 @@ val cache : 'fd t -> 'fd Cachet.t
 (** [cache t] returns the cache used to access pages in the PACK file. *)
 
 val allocate : 'fd t -> int -> Zl.window
-val tmp : 'fd t -> De.bigstring
+val tmp : 'fd t -> Bstr.t
 val ref_length : 'fd t -> int
 val map : 'fd t -> cursor:int -> consumed:int -> Cachet.Bstr.t
 val with_index : 'fd t -> (Uid.t -> int) -> 'fd t
@@ -456,9 +460,9 @@ module Blob : sig
   val make : size:Size.t -> t
   val of_string : string -> t
   val size : t -> Size.t
-  val source : t -> De.bigstring
-  val with_source : t -> source:De.bigstring -> t
-  val payload : t -> De.bigstring
+  val source : t -> Bstr.t
+  val with_source : t -> source:Bstr.t -> t
+  val payload : t -> Bstr.t
   val flip : t -> t
 end
 
@@ -494,15 +498,15 @@ module Value : sig
   type t
 
   val kind : t -> Kind.t
-  val bigstring : t -> De.bigstring
-  val source : t -> De.bigstring
-  val with_source : t -> source:De.bigstring -> t
+  val bigstring : t -> Bstr.t
+  val source : t -> Bstr.t
+  val with_source : t -> source:Bstr.t -> t
   val string : t -> string
   val length : t -> int
   val depth : t -> int
   val blob : t -> Blob.t
   val flip : t -> t
-  val make : kind:Kind.t -> ?depth:int -> De.bigstring -> t
+  val make : kind:Kind.t -> ?depth:int -> Bstr.t -> t
   val of_string : kind:Kind.t -> ?depth:int -> string -> t
   val of_blob : kind:Kind.t -> length:int -> ?depth:int -> Blob.t -> t
   val pp : Format.formatter -> t -> unit

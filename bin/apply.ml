@@ -23,6 +23,12 @@ let new_target filename ~len =
   let barr = Unix.map_file fd Bigarray.char Bigarray.c_layout true [| len |] in
   Bigarray.array1_of_genarray barr
 
+let input_bigstring ic bstr off len =
+  let buf = Bytes.create len in
+  let len = Stdlib.input ic buf 0 len in
+  Bstr.blit_from_bytes buf ~src_off:0 bstr ~dst_off:off ~len;
+  len
+
 let deflated_apply source ic target =
   let src = bigstring_of_filename source in
   let decoder = Carton.H.M.decoder ~source:src `Manual in
@@ -30,7 +36,7 @@ let deflated_apply source ic target =
   let rec go dst =
     match Carton.H.M.decode decoder with
     | `Await ->
-        let len = Carton.H.input_bigstring ic buf 0 (Bigarray.Array1.dim buf) in
+        let len = input_bigstring ic buf 0 (Bigarray.Array1.dim buf) in
         Carton.H.M.src decoder buf 0 len;
         go dst
     | `Header (src_len, dst_len) ->
@@ -42,7 +48,7 @@ let deflated_apply source ic target =
     | `End -> Ok ()
     | `Malformed err -> error_msgf "Malformed patch: %s" err
   in
-  go Carton.H.bigstring_empty
+  go Bstr.empty
 
 let inflated_apply source ic target =
   let src = bigstring_of_filename source in
@@ -55,7 +61,7 @@ let inflated_apply source ic target =
   let rec go dst decoder =
     match Carton.Zh.M.decode decoder with
     | `Await decoder ->
-        let len = Carton.H.input_bigstring ic buf 0 (Bigarray.Array1.dim buf) in
+        let len = input_bigstring ic buf 0 (Bigarray.Array1.dim buf) in
         let decoder = Carton.Zh.M.src decoder buf 0 len in
         go dst decoder
     | `Header (src_len, dst_len, decoder) ->
@@ -66,7 +72,7 @@ let inflated_apply source ic target =
     | `End _ -> Ok ()
     | `Malformed err -> error_msgf "Malformed patch: %s" err
   in
-  go Carton.H.bigstring_empty decoder
+  go Bstr.empty decoder
 
 let run _quiet compressed source patch target =
   let ic, finally =

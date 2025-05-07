@@ -40,7 +40,7 @@ val index :
   -> 'fd Classeur.t
 
 val make :
-     ?z:De.bigstring
+     ?z:Bstr.t
   -> ref_length:int
   -> ?index:(Carton.Uid.t -> int)
   -> 'fd Cachet.t

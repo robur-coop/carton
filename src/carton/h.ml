@@ -1,141 +1,9 @@
-type bigstring =
-  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-let bigstring_empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
-let bigstring_length x = Bigarray.Array1.dim x [@@inline]
-
-let bigstring_create l =
-  Bigarray.Array1.create Bigarray.char Bigarray.c_layout l
-
-external unsafe_get_uint8 : bigstring -> int -> int = "%caml_ba_ref_1"
-external unsafe_get_char : bigstring -> int -> char = "%caml_ba_ref_1"
-external unsafe_get_uint32 : bigstring -> int -> int32 = "%caml_bigstring_get32"
-
-external unsafe_set_uint32 : bigstring -> int -> int32 -> unit
-  = "%caml_bigstring_set32"
-
-external unsafe_set_uint8 : bigstring -> int -> int -> unit = "%caml_ba_set_1"
-
-let unsafe_blit_from_string src src_off dst dst_off len =
-  let len0 = len land 3 in
-  let len1 = len lsr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = String.get_int32_ne src (src_off + i) in
-    unsafe_set_uint32 dst (dst_off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = String.get_uint8 src (src_off + i) in
-    unsafe_set_uint8 dst (dst_off + i) v
-  done
-
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
-
-let invalid_bounds off len bstr =
-  invalid_argf "H: Out of bounds (off: %d, len: %d, real-len: %d)" off len
-    (bigstring_length bstr)
-
 let invalid_encode () = invalid_argf "expected `Await encode"
 
-let unsafe_blit_to_bytes src src_off dst dst_off len =
-  let len0 = len land 3 in
-  let len1 = len lsr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = unsafe_get_uint32 src (src_off + i) in
-    Bytes.set_int32_ne dst (dst_off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = unsafe_get_uint8 src (src_off + i) in
-    Bytes.set_uint8 dst (dst_off + i) v
-  done
-
-let bigstring_to_string bstr =
-  let len = bigstring_length bstr in
-  let buf = Bytes.create len in
-  unsafe_blit_to_bytes bstr 0 buf 0 len;
-  Bytes.unsafe_to_string buf
-
-let bigstring_substring bstr off len =
-  let buf = Bytes.create len in
-  unsafe_blit_to_bytes bstr off buf 0 len;
-  Bytes.unsafe_to_string buf
-
-let output_bigstring oc buf off len =
-  (* XXX(dinosaure): stupidly slow! *)
-  let v = Bigarray.Array1.sub buf off len in
-  let v = bigstring_to_string v in
-  output_string oc v
-
-external bytes_unsafe_get_uint32 : bytes -> int -> int32 = "%caml_bytes_get32"
-
-let bytes_unsafe_get_uint8 : bytes -> int -> int =
- fun buf off -> Char.code (Bytes.get buf off)
-
-let input_bigstring ic buf off len =
-  let tmp = Bytes.create len in
-  let res = input ic tmp 0 len in
-  let len0 = res land 3 in
-  let len1 = res asr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = bytes_unsafe_get_uint32 tmp i in
-    unsafe_set_uint32 buf (off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = bytes_unsafe_get_uint8 tmp i in
-    unsafe_set_uint8 buf (off + i) v
-  done;
-  res
-
-let slow_blit src src_off dst dst_off len =
-  let src = Bigarray.Array1.sub src src_off len in
-  let dst = Bigarray.Array1.sub dst dst_off len in
-  Bigarray.Array1.blit src dst
-
-let unsafe_blit src src_off dst dst_off len =
-  if src_off - dst_off < 4 || len < 4 then slow_blit src src_off dst dst_off len
-  else
-    let len0 = len land 3 in
-    let len1 = len asr 2 in
-    for i = 0 to len1 - 1 do
-      let i = i * 4 in
-      let v = unsafe_get_uint32 src (src_off + i) in
-      unsafe_set_uint32 dst (dst_off + i) v
-    done;
-    for i = 0 to len0 - 1 do
-      let i = (len1 * 4) + i in
-      let v = unsafe_get_uint8 src (src_off + i) in
-      unsafe_set_uint8 dst (dst_off + i) v
-    done
-
-external string_unsafe_get_uint32 : string -> int -> int32
-  = "%caml_string_get32"
-
-let string_unsafe_get_uint8 : string -> int -> int =
- fun buf off -> Char.code buf.[off]
-
-let bigstring_of_string v =
-  let len = String.length v in
-  let res = bigstring_create len in
-  let len0 = len land 3 in
-  let len1 = len asr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = string_unsafe_get_uint32 v i in
-    unsafe_set_uint32 res i v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = string_unsafe_get_uint8 v i in
-    unsafe_set_uint8 res i v
-  done;
-  res
-
-let io_buffer_size = 65536
+let invalid_bounds off len bstr =
+  invalid_argf "Out of bounds (off: %d, len: %d, real-len: %d)" off len
+    (Bstr.length bstr)
 
 external ( < ) : 'a -> 'a -> bool = "%lessthan"
 external ( <= ) : 'a -> 'a -> bool = "%lessequal"
@@ -146,19 +14,19 @@ let ( < ) (x : int) y = x < y [@@inline]
 let ( <= ) (x : int) y = x <= y [@@inline]
 
 module M = struct
-  type src = [ `Channel of in_channel | `Manual | `String of string ]
+  type src = [ `Manual | `String of string ]
   type decode = [ `Await | `Header of int * int | `End | `Malformed of string ]
 
   type decoder = {
-      mutable source: bigstring
+      mutable source: Bstr.t
     ; src: src
-    ; mutable dst: bigstring
-    ; mutable i: bigstring
+    ; mutable dst: Bstr.t
+    ; mutable i: Bstr.t
     ; mutable i_pos: int
     ; mutable i_len: int
     ; mutable t_len: int
     ; mutable t_need: int
-    ; t_tmp: bigstring
+    ; t_tmp: Bstr.t
     ; mutable o_pos: int
     ; mutable src_len: int
     ; mutable dst_len: int
@@ -174,7 +42,7 @@ module M = struct
     let i = ref 0 in
     let len = ref 0 in
     while
-      let cmd = unsafe_get_uint8 buf !p in
+      let cmd = Bstr.get_uint8 buf !p in
       incr p;
       len := !len lor ((cmd land 0x7f) lsl !i);
       i := !i + 7;
@@ -186,13 +54,13 @@ module M = struct
   [@@inline]
 
   let eoi d =
-    d.i <- bigstring_empty;
+    d.i <- Bstr.empty;
     d.i_pos <- 0;
     d.i_len <- min_int
 
   let i_rem d = d.i_len - d.i_pos + 1 [@@inline]
   let src_rem = i_rem
-  let dst_rem d = bigstring_length d.dst - d.o_pos
+  let dst_rem d = Bstr.length d.dst - d.o_pos
   let src_len { src_len; _ } = src_len
   let dst_len { dst_len; _ } = dst_len
   let malformedf fmt = Format.kasprintf (fun s -> Malformed s) fmt
@@ -202,23 +70,23 @@ module M = struct
     d.t_need <- n
 
   let src d s j l =
-    if j < 0 || l < 0 || j + l > bigstring_length s then invalid_bounds j l s;
+    if j < 0 || l < 0 || j + l > Bstr.length s then invalid_bounds j l s;
     if l == 0 then eoi d
     else (
       d.i <- s;
       d.i_pos <- j;
       d.i_len <- j + l - 1)
 
-  let dst d s j l =
+  let dst d bstr off len =
+    Logs.debug (fun m -> m "off:%d, len:%d" off len);
     match d.s with
     | Postprocess ->
-        if j < 0 || l < 0 || j + l > bigstring_length s then
-          invalid_bounds j l s
-        else if l < d.dst_len then invalid_argf "Invalid destination"
-        else (
-          d.dst <- s;
-          d.o_pos <- j;
-          if bigstring_length d.source >= d.src_len then d.s <- Cmd)
+        if off < 0 || len < 0 || off + len > Bstr.length bstr then
+          invalid_bounds off len bstr;
+        if len < d.dst_len then invalid_argf "Invalid destination";
+        d.dst <- bstr;
+        d.o_pos <- off;
+        if Bstr.length d.source >= d.src_len then d.s <- Cmd
     | _ -> invalid_argf "Invalid call of dst"
 
   let pp_state ppf = function
@@ -231,7 +99,7 @@ module M = struct
   let source d src =
     match d.s with
     | Postprocess ->
-        if bigstring_length src < d.src_len then invalid_argf "Invalid source"
+        if Bstr.length src < d.src_len then invalid_argf "Invalid source"
         else d.source <- src
     | _ -> invalid_argf "Invalid call of source (state: %a)" pp_state d.s
 
@@ -239,16 +107,13 @@ module M = struct
   let refill k d =
     match d.src with
     | `String _ -> eoi d; k d
-    | `Channel ic ->
-        let res = input_bigstring ic d.i 0 (bigstring_length d.i) in
-        src d d.i 0 res; k d
     | `Manual ->
         d.k <- k;
         Await
 
   let rec t_fill k d =
     let blit d len =
-      unsafe_blit d.i d.i_pos d.t_tmp d.t_len len;
+      Bstr.blit d.i ~src_off:d.i_pos d.t_tmp ~dst_off:d.t_len ~len;
       d.i_pos <- d.i_pos + len;
       d.t_len <- d.t_len + len
     in
@@ -289,35 +154,35 @@ module M = struct
     let cp_off = ref 0 in
     let cp_len = ref 0 in
     if command land 0x01 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bstr.get_uint8 i !p in
       cp_off := v;
       incr p);
     if command land 0x02 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bstr.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 8);
       incr p);
     if command land 0x04 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bstr.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 16);
       incr p);
     if command land 0x08 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bstr.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 24);
       incr p);
     if command land 0x10 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bstr.get_uint8 i !p in
       cp_len := v;
       incr p);
     if command land 0x20 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bstr.get_uint8 i !p in
       cp_len := !cp_len lor (v lsl 8);
       incr p);
     if command land 0x40 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bstr.get_uint8 i !p in
       cp_len := !cp_len lor (v lsl 16);
       incr p);
     if !cp_len == 0 then cp_len := 0x10000;
-    unsafe_blit d.source !cp_off d.dst d.o_pos !cp_len;
+    Bstr.blit d.source ~src_off:!cp_off d.dst ~dst_off:d.o_pos ~len:!cp_len;
     if d.t_len > 0 then d.t_len <- 0 else d.i_pos <- !p;
     d.o_pos <- d.o_pos + !cp_len;
     d.s <- Cmd;
@@ -326,23 +191,25 @@ module M = struct
 
   and it d =
     let[@warning "-8"] (It len) = d.s in
-    if d.t_len > 0 then (
-      unsafe_blit d.t_tmp 0 d.dst d.o_pos len;
+    if d.t_len > 0 then begin
+      Bstr.blit d.t_tmp ~src_off:0 d.dst ~dst_off:d.o_pos ~len;
       d.t_len <- 0;
       d.o_pos <- d.o_pos + len;
       d.s <- Cmd;
       d.k <- decode_k;
-      decode_k d)
-    else (
-      unsafe_blit d.i d.i_pos d.dst d.o_pos len;
+      decode_k d
+    end
+    else begin
+      Bstr.blit d.i ~src_off:d.i_pos d.dst ~dst_off:d.o_pos ~len;
       d.i_pos <- d.i_pos + len;
       d.o_pos <- d.o_pos + len;
       d.s <- Cmd;
       d.k <- decode_k;
-      decode_k d)
+      decode_k d
+    end
 
   and cmd d =
-    let c = unsafe_get_uint8 d.i d.i_pos in
+    let c = Bstr.get_uint8 d.i d.i_pos in
     if c == 0 then malformedf "Invalid delta code (%02x)" c
     else (
       d.s <- (if c land 0x80 != 0 then Cp c else It c);
@@ -390,23 +257,22 @@ module M = struct
     | End -> `End
     | Malformed err -> `Malformed err
 
-  let decoder ?(source = bigstring_empty) src =
+  let decoder ?(source = Bstr.empty) src =
     let i, i_pos, i_len =
       match src with
-      | `Manual -> (bigstring_empty, 1, 0)
-      | `String x -> (bigstring_of_string x, 0, String.length x - 1)
-      | `Channel _ -> (bigstring_create io_buffer_size, 1, 0)
+      | `Manual -> (Bstr.empty, 1, 0)
+      | `String x -> (Bstr.of_string x, 0, String.length x - 1)
     in
     {
       src
     ; source
-    ; dst= bigstring_empty
+    ; dst= Bstr.empty
     ; i
     ; i_pos
     ; i_len
     ; t_len= 0
     ; t_need= 0
-    ; t_tmp= bigstring_create 128
+    ; t_tmp= Bstr.create 128
     ; o_pos= 0
     ; src_len= 0
     ; dst_len= 0
@@ -416,7 +282,7 @@ module M = struct
 end
 
 module R = struct
-  type src = [ `Channel of in_channel | `Manual | `String of string ]
+  type src = [ `Manual | `String of string ]
 
   type decode =
     [ `Await
@@ -428,12 +294,12 @@ module R = struct
 
   type decoder = {
       src: src
-    ; mutable i: bigstring
+    ; mutable i: bytes
     ; mutable i_pos: int
     ; mutable i_len: int
     ; mutable t_len: int
     ; mutable t_need: int
-    ; t_tmp: bigstring
+    ; t_tmp: bytes
     ; mutable src_len: int
     ; mutable dst_len: int
     ; mutable s: state
@@ -450,8 +316,12 @@ module R = struct
 
   and state = Header | Cmd | Cp of int | It of int
 
+  let invalid_bounds off len str =
+    invalid_argf "H.R: Out of bounds (off: %d, len: %d, real-len: %d)" off len
+      (String.length str)
+
   let eoi decoder =
-    decoder.i <- bigstring_empty;
+    decoder.i <- Bytes.empty;
     decoder.i_pos <- 0;
     decoder.i_len <- min_int
 
@@ -465,11 +335,10 @@ module R = struct
     decoder.t_need <- n
 
   let src decoder src j l =
-    if j < 0 || l < 0 || j + l > bigstring_length src then
-      invalid_bounds j l src;
+    if j < 0 || l < 0 || j + l > String.length src then invalid_bounds j l src;
     if l == 0 then eoi decoder
     else begin
-      decoder.i <- src;
+      decoder.i <- Bytes.unsafe_of_string src;
       decoder.i_pos <- j;
       decoder.i_len <- j + l - 1
     end
@@ -477,17 +346,13 @@ module R = struct
   let refill k decoder =
     match decoder.src with
     | `String _ -> eoi decoder; k decoder
-    | `Channel ic ->
-        let res = input_bigstring ic decoder.i 0 (bigstring_length decoder.i) in
-        src decoder decoder.i 0 res;
-        k decoder
     | `Manual ->
         decoder.k <- k;
         `Await
 
   let rec t_fill k decoder =
     let blit decoder len =
-      unsafe_blit decoder.i decoder.i_pos decoder.t_tmp decoder.t_len len;
+      Bytes.blit decoder.i decoder.i_pos decoder.t_tmp decoder.t_len len;
       decoder.i_pos <- decoder.i_pos + len;
       decoder.t_len <- decoder.t_len + len
     in
@@ -508,6 +373,22 @@ module R = struct
     | It len -> len
     | _ -> assert false
 
+  let variable_length buf off top =
+    let p = ref off in
+    let i = ref 0 in
+    let len = ref 0 in
+    while
+      let cmd = Bytes.get_uint8 buf !p in
+      incr p;
+      len := !len lor ((cmd land 0x7f) lsl !i);
+      i := !i + 7;
+      cmd land 0x80 != 0 && !p <= top
+    do
+      ()
+    done;
+    (!p - off, !len)
+  [@@inline]
+
   let rec cp decoder =
     let[@warning "-8"] (Cp command) = decoder.s in
     let p = ref (if decoder.t_len > 0 then 0 else decoder.i_pos) in
@@ -515,31 +396,31 @@ module R = struct
     let cp_off = ref 0 in
     let cp_len = ref 0 in
     if command land 0x01 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := v;
       incr p);
     if command land 0x02 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 8);
       incr p);
     if command land 0x04 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 16);
       incr p);
     if command land 0x08 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_off := !cp_off lor (v lsl 24);
       incr p);
     if command land 0x10 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_len := v;
       incr p);
     if command land 0x20 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_len := !cp_len lor (v lsl 8);
       incr p);
     if command land 0x40 != 0 then (
-      let v = unsafe_get_uint8 i !p in
+      let v = Bytes.get_uint8 i !p in
       cp_len := !cp_len lor (v lsl 16);
       incr p);
     if !cp_len == 0 then cp_len := 0x10000;
@@ -551,20 +432,20 @@ module R = struct
   and it decoder =
     let[@warning "-8"] (It len) = decoder.s in
     if decoder.t_len > 0 then begin
-      let str = bigstring_substring decoder.t_tmp 0 len in
+      let str = Bytes.sub_string decoder.t_tmp 0 len in
       decoder.s <- Cmd;
       decoder.k <- decode_k;
       `Insert str
     end
     else begin
-      let str = bigstring_substring decoder.i decoder.i_pos len in
+      let str = Bytes.sub_string decoder.i decoder.i_pos len in
       decoder.s <- Cmd;
       decoder.k <- decode_k;
       `Insert str
     end
 
   and cmd decoder =
-    let c = unsafe_get_uint8 decoder.i decoder.i_pos in
+    let c = Bytes.get_uint8 decoder.i decoder.i_pos in
     if c == 0 then malformedf "Invalid delta code (%02x)" c
     else begin
       decoder.s <- (if c land 0x80 != 0 then Cp c else It c);
@@ -585,10 +466,10 @@ module R = struct
           if rem < 2 then invalid_argf "Not enough space";
           (* TODO: [malformedf]? *)
           let x, src_len =
-            M.variable_length decoder.i decoder.i_pos decoder.i_len
+            variable_length decoder.i decoder.i_pos decoder.i_len
           in
           let y, dst_len =
-            M.variable_length decoder.i (decoder.i_pos + x) decoder.i_len
+            variable_length decoder.i (decoder.i_pos + x) decoder.i_len
           in
           decoder.i_pos <- decoder.i_pos + x + y;
           decoder.src_len <- src_len;
@@ -615,9 +496,8 @@ module R = struct
   let decoder src =
     let i, i_pos, i_len =
       match src with
-      | `Manual -> (bigstring_empty, 1, 0)
-      | `String x -> (bigstring_of_string x, 0, String.length x - 1)
-      | `Channel _ -> (bigstring_create io_buffer_size, 1, 0)
+      | `Manual -> (Bytes.empty, 1, 0)
+      | `String x -> (Bytes.unsafe_of_string x, 0, String.length x - 1)
     in
     {
       src
@@ -626,28 +506,50 @@ module R = struct
     ; i_len
     ; t_len= 0
     ; t_need= 0
-    ; t_tmp= bigstring_create 128
+    ; t_tmp= Bytes.create 128
     ; src_len= 0
     ; dst_len= 0
     ; s= Header
     ; k= decode_k
     }
+
+  let of_seq seq =
+   fun () ->
+    let decoder = decoder `Manual in
+    let rec go seq =
+      match decode decoder with
+      | `Await -> begin
+          match Seq.uncons seq with
+          | Some (str, seq) ->
+              src decoder str 0 (String.length str);
+              go seq
+          | None ->
+              src decoder String.empty 0 0;
+              go seq
+        end
+      | (`Header _ | `Copy _ | `Insert _) as value ->
+          let next () = go seq in
+          Seq.Cons (value, next)
+      | `End -> Seq.Nil
+      | `Malformed err -> failwith err
+    in
+    go seq
 end
 
 [@@@warning "-69"]
 
 module N = struct
-  type dst = [ `Channel of out_channel | `Buffer of Buffer.t | `Manual ]
+  type dst = [ `Buffer of Buffer.t | `Manual ]
   type encode = [ `Await | `Copy of int * int | `Insert of string | `End ]
 
   type encoder = {
       dst: dst
     ; src_len: int
     ; dst_len: int
-    ; mutable o: bigstring
+    ; mutable o: Bstr.t
     ; mutable o_pos: int
     ; mutable o_max: int
-    ; t: bigstring
+    ; t: Bstr.t
     ; (* XXX(dinosaure): [bytes]? *)
       mutable t_pos: int
     ; mutable t_max: int
@@ -660,7 +562,7 @@ module N = struct
   let o_rem e = e.o_max - e.o_pos + 1 [@@inline]
 
   let dst e s j l =
-    if j < 0 || l < 0 || j + l > bigstring_length s then invalid_bounds j l s;
+    if j < 0 || l < 0 || j + l > Bstr.length s then invalid_bounds j l s;
     e.o <- s;
     e.o_pos <- j;
     e.o_max <- j + l - 1
@@ -676,14 +578,10 @@ module N = struct
     | `Manual ->
         e.k <- partial k;
         `Partial
-    | `Channel oc ->
-        output_bigstring oc e.o 0 e.o_pos;
-        e.o_pos <- 0;
-        k e
     | `Buffer b ->
         (* XXX(dinosaure): optimize it! *)
         for i = 0 to e.o_pos - 1 do
-          Buffer.add_char b (unsafe_get_char e.o i)
+          Buffer.add_char b (Bstr.get e.o i)
         done;
         e.o_pos <- 0;
         k e
@@ -706,7 +604,7 @@ module N = struct
 
   let rec t_flush k e =
     let blit e l =
-      unsafe_blit e.t e.t_pos e.o e.o_pos l;
+      Bstr.blit e.t ~src_off:e.t_pos e.o ~dst_off:e.o_pos ~len:l;
       e.o_pos <- e.o_pos + l;
       e.t_pos <- e.t_pos + l
     in
@@ -738,20 +636,16 @@ module N = struct
             e.o_pos <- e.o_pos + required;
             (e.o, j, k)
         in
-        unsafe_set_uint8 s j (cmd lor 0x80);
+        Bstr.set_uint8 s j (cmd lor 0x80);
         let pos = ref (j + 1) in
         let off = ref off in
         while !off <> 0 do
-          if !off land 0xff != 0 then (
-            unsafe_set_uint8 s !pos !off;
-            incr pos);
+          if !off land 0xff != 0 then (Bstr.set_uint8 s !pos !off; incr pos);
           off := !off asr 8
         done;
         let len = ref len in
         while !len <> 0 do
-          if !len land 0xff != 0 then (
-            unsafe_set_uint8 s !pos !len;
-            incr pos);
+          if !len land 0xff != 0 then (Bstr.set_uint8 s !pos !len; incr pos);
           len := !len asr 8
         done;
         k e
@@ -768,8 +662,9 @@ module N = struct
             e.o_pos <- e.o_pos + required;
             (e.o, j, k)
         in
-        unsafe_set_uint8 s j (String.length p);
-        unsafe_blit_from_string p 0 s (j + 1) (String.length p);
+        Bstr.set_uint8 s j (String.length p);
+        Bstr.blit_from_string p ~src_off:0 s ~dst_off:(j + 1)
+          ~len:(String.length p);
         k e
     | `End -> flush k e
 
@@ -777,11 +672,11 @@ module N = struct
     let l = ref length in
     let off = ref off in
     while !l >= 0x80 do
-      unsafe_set_uint8 buf !off (!l lor 0x80 land 0xff);
+      Bstr.set_uint8 buf !off (!l lor 0x80 land 0xff);
       incr off;
       l := !l asr 7
     done;
-    unsafe_set_uint8 buf !off !l
+    Bstr.set_uint8 buf !off !l
 
   let needed length =
     let l = ref length in
@@ -819,9 +714,8 @@ module N = struct
   let encoder dst ~src_len ~dst_len =
     let o, o_pos, o_max =
       match dst with
-      | `Manual -> (bigstring_empty, 1, 0)
-      | `Buffer _ | `Channel _ ->
-          (bigstring_create io_buffer_size, 0, io_buffer_size - 1)
+      | `Manual -> (Bstr.empty, 1, 0)
+      | `Buffer _ -> (Bstr.create De.io_buffer_size, 0, De.io_buffer_size - 1)
     in
     {
       dst
@@ -830,7 +724,7 @@ module N = struct
     ; o
     ; o_pos
     ; o_max
-    ; t= bigstring_create 128
+    ; t= Bstr.create 128
     ; t_pos= 1
     ; t_max= 0
     ; s= Header

@@ -1,117 +1,7 @@
-[@@@warning "-32"]
-
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 let src = Logs.Src.create "carton.idx"
 
 module Log = (val Logs.src_log src : Logs.LOG)
-
-type bigstring =
-  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-external bigstring_get_uint8 : bigstring -> int -> int = "%caml_ba_ref_1"
-
-external bigstring_set_uint8 : bigstring -> int -> int -> unit
-  = "%caml_ba_set_1"
-
-external bigstring_get_int32_ne : bigstring -> int -> int32
-  = "%caml_bigstring_get32"
-
-external bigstring_get_int64_ne : bigstring -> int -> int64
-  = "%caml_bigstring_get64"
-
-external bigstring_get_int16_ne : bigstring -> int -> int
-  = "%caml_bigstring_get16"
-
-external bigstring_set_int32_ne : bigstring -> int -> int32 -> unit
-  = "%caml_bigstring_set32"
-
-external bigstring_set_int64_ne : bigstring -> int -> int64 -> unit
-  = "%caml_bigstring_set64"
-
-external swap32 : int32 -> int32 = "%bswap_int32"
-external swap64 : int64 -> int64 = "%bswap_int64"
-external swap16 : int -> int = "%bswap16"
-
-let bigstring_get_int16_be =
-  if Sys.big_endian then fun buf off -> bigstring_get_int16_ne buf off
-  else fun buf off -> swap16 (bigstring_get_int16_ne buf off)
-
-let bigstring_get_int64_be =
-  if Sys.big_endian then fun buf off -> bigstring_get_int64_ne buf off
-  else fun buf off -> swap64 (bigstring_get_int64_ne buf off)
-
-let bigstring_get_int32_be =
-  if Sys.big_endian then fun buf off -> bigstring_get_int32_ne buf off
-  else fun buf off -> swap32 (bigstring_get_int32_ne buf off)
-
-let bigstring_set_int32_be =
-  if Sys.big_endian then fun buf off value ->
-    bigstring_set_int32_ne buf off value
-  else fun buf off value -> bigstring_set_int32_ne buf off (swap32 value)
-
-let bigstring_set_int64_be =
-  if Sys.big_endian then fun buf off value ->
-    bigstring_set_int64_ne buf off value
-  else fun buf off value -> bigstring_set_int64_ne buf off (swap64 value)
-
-let bigstring_blit_to_bytes src ~src_off dst ~dst_off ~len =
-  let len0 = len land 3 in
-  let len1 = len lsr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = bigstring_get_int32_ne src (src_off + i) in
-    Bytes.set_int32_ne dst (dst_off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = bigstring_get_uint8 src (src_off + i) in
-    Bytes.set_uint8 dst (dst_off + i) v
-  done
-
-let bigstring_blit_from_bytes src ~src_off dst ~dst_off ~len =
-  let len0 = len land 3 in
-  let len1 = len lsr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = Bytes.get_int32_ne src (src_off + i) in
-    bigstring_set_int32_ne dst (dst_off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = Bytes.get_uint8 src (src_off + i) in
-    bigstring_set_uint8 dst (dst_off + i) v
-  done
-
-let bigstring_blit_from_string src ~src_off dst ~dst_off ~len =
-  bigstring_blit_from_bytes
-    (Bytes.unsafe_of_string src)
-    ~src_off dst ~dst_off ~len
-
-let bigstring_sub_string bstr ~off:src_off ~len =
-  let buf = Bytes.create len in
-  bigstring_blit_to_bytes bstr ~src_off buf ~dst_off:0 ~len;
-  Bytes.unsafe_to_string buf
-
-let memcpy src ~src_off dst ~dst_off ~len =
-  if
-    len < 0
-    || src_off < 0
-    || src_off > Bigarray.Array1.dim src - len
-    || dst_off < 0
-    || dst_off > Bigarray.Array1.dim dst - len
-  then invalid_arg "memcpy";
-  let len0 = len land 3 in
-  let len1 = len lsr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = bigstring_get_int32_ne src (src_off + i) in
-    bigstring_set_int32_ne dst (dst_off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = bigstring_get_uint8 src (src_off + i) in
-    bigstring_set_uint8 dst (dst_off + i) v
-  done
 
 type uid = string
 type 'a fn = uid:uid -> crc:Optint.t -> offset:int -> 'a
@@ -293,7 +183,7 @@ module type UID = sig
   type ctx
 
   val empty : ctx
-  val feed : ctx -> ?off:int -> ?len:int -> bigstring -> ctx
+  val feed : ctx -> ?off:int -> ?len:int -> Bstr.t -> ctx
   val get : ctx -> t
   val compare : t -> t -> int
   val length : int
@@ -620,8 +510,6 @@ module Encoder = struct
     Bytes.set_int32_be dst dst_off 0xff744f63l;
     Bytes.set_int32_be dst (dst_off + 4) 0x2l;
     k encoder
-
-  let io_buffer_size = 65536
 
   let encoder dst ~digest ~pack ~ref_length index =
     let compare { uid= a; _ } { uid= b; _ } = String.compare a b in
