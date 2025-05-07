@@ -1,8 +1,6 @@
-val bigstring_sub_string : Zl.bigstring -> off:int -> len:int -> string
-
 module N : sig
   type encoder
-  type dst = [ `Channel of out_channel | `Buffer of Buffer.t | `Manual ]
+  type dst = [ `Buffer of Buffer.t | `Manual ]
   type ret = [ `Flush of encoder | `End ]
 
   val dst_rem : encoder -> int
@@ -15,7 +13,7 @@ module N : sig
     -> q:De.Queue.t
     -> w:De.Lz77.window
     -> source:int
-    -> H.bigstring
+    -> Bstr.t
     -> dst
     -> Duff.hunk list
     -> encoder
@@ -23,7 +21,7 @@ end
 
 module M : sig
   type decoder
-  type src = [ `Channel of in_channel | `String of string | `Manual ]
+  type src = [ `String of string | `Manual ]
 
   type decode =
     [ `Await of decoder
@@ -36,12 +34,12 @@ module M : sig
   val src_rem : decoder -> int
   val dst_rem : decoder -> int
   val src : decoder -> Zl.bigstring -> int -> int -> decoder
-  val dst : decoder -> H.bigstring -> int -> int -> decoder
-  val source : decoder -> H.bigstring -> decoder
+  val dst : decoder -> Bstr.t -> int -> int -> decoder
+  val source : decoder -> Bstr.t -> decoder
   val decode : decoder -> decode
 
   val decoder :
-       ?source:H.bigstring
+       ?source:Bstr.t
     -> o:Zl.bigstring
     -> allocate:(int -> Zl.window)
     -> src

@@ -3,16 +3,11 @@ let src = Logs.Src.create "carton-miou-unix"
 module Log = (val Logs.src_log src : Logs.LOG)
 
 external getpagesize : unit -> int = "carton_miou_unix_getpagesize" [@@noalloc]
+external reraise : exn -> 'a = "%reraise"
 
 let failwithf fmt = Format.kasprintf failwith fmt
 let ignore3 ~cursor:_ _ _ = ()
 let ignorem ~max:_ _ = ()
-
-let bigstring_copy bstr =
-  let len = Bigarray.Array1.dim bstr in
-  let res = Bigarray.Array1.create Bigarray.char Bigarray.c_layout len in
-  Cachet.memcpy bstr ~src_off:0 res ~dst_off:0 ~len;
-  res
 
 type file_descr = Unix.file_descr * int
 
@@ -54,9 +49,7 @@ let make ?(pagesize = getpagesize ()) ?cachesize ?z ~ref_length ?(index = never)
     failwith "Too huge PACK file";
   if stat.Unix.LargeFile.st_size > _max_int63 then failwith "Too huge PACK file";
   let fd = (fd, Int64.to_int stat.Unix.LargeFile.st_size) in
-  let z =
-    match z with None -> De.bigstring_create De.io_buffer_size | Some z -> z
-  in
+  let z = match z with None -> Bstr.create De.io_buffer_size | Some z -> z in
   let allocate bits = De.make_window ~bits in
   Carton.make ~pagesize ?cachesize ~map fd ~z ~allocate ~ref_length index
 
@@ -122,7 +115,7 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~base = function
       resolve_tree ~on t oracle matrix ~base children
   | cursors ->
       let source = Carton.Value.source base.value in
-      let source = bigstring_copy source in
+      let source = Bstr.copy source in
       let rec go idx =
         if idx < Array.length cursors then begin
           let cursor = cursors.(idx) in
@@ -141,6 +134,7 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~base = function
           and crc = oracle.checksum ~cursor
           and depth = succ base.depth in
           on ~cursor value uid;
+          Log.debug (fun m -> m "resolve node %d/%d" pos (Array.length matrix));
           matrix.(pos) <-
             Resolved_node { cursor; uid; crc; kind; depth; parent= base.uid };
           let children = oracle.children ~cursor ~uid in
@@ -196,8 +190,11 @@ let verify ?(threads = 4) ?(on = ignore3) t oracle matrix =
     end
   in
   let init _thread = Carton.copy t in
-  let results = Miou.parallel fn (List.init threads init) in
-  List.iter (function Ok () -> () | Error exn -> raise exn) results
+  let results =
+    if threads > 0 then Miou.parallel fn (List.init threads init)
+    else try fn t; [ Ok () ] with exn -> [ Error exn ]
+  in
+  List.iter (function Ok () -> () | Error exn -> reraise exn) results
 
 (** utils *)
 
@@ -248,22 +245,38 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
       end
   in
   let number_of_objects = ref 0 in
-  let fn pos = function
+  let (Carton.Identify i) = identify in
+  let ctx = ref None in
+  let fn = function
     | `Number n -> number_of_objects := n
     | `Hash value -> hash := value
+    | `Inflate (None, _) -> ()
+    | `Inflate (Some (k, size), str) -> begin
+        let open Carton in
+        let open First_pass in
+        match !ctx with
+        | None ->
+            let ctx0 = i.init k (Carton.Size.of_int_exn size) in
+            let ctx0 = i.feed (Bstr.of_string str) ctx0 in
+            ctx := Some ctx0
+        | Some ctx0 ->
+            let ctx0 = i.feed (Bstr.of_string str) ctx0 in
+            ctx := Some ctx0
+      end
     | `Entry entry -> begin
-        let pos = pred pos in
         let offset = entry.Carton.First_pass.offset in
         let size = entry.Carton.First_pass.size in
         let crc = entry.Carton.First_pass.crc in
         let consumed = entry.Carton.First_pass.consumed in
         on ~max:!number_of_objects { offset; crc; consumed; size:> int };
-        Hashtbl.add where offset pos;
+        Hashtbl.add where offset entry.number;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
-        | Carton.First_pass.Base (_, uid, _) ->
+        | Carton.First_pass.Base _ ->
             Hashtbl.add sizes offset (ref size);
-            Hashtbl.add is_base pos offset;
+            Hashtbl.add is_base entry.number offset;
+            let uid = Option.get (Option.map i.serialize !ctx) in
+            ctx := None;
             Hashtbl.add index uid offset
         | Ofs { sub; source; target; _ } ->
             Log.debug (fun m ->
@@ -293,7 +306,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
             new_child ~parent:(`Ref ptr) offset
       end
   in
-  Seq.iteri fn seq;
+  Seq.iter fn seq;
   Hashtbl.iter
     (fun offset ptr ->
       match Hashtbl.find_opt index ptr with
@@ -338,17 +351,16 @@ let verify_from_pack
       ; pagesize
       ; cachesize
       ; ref_length
-      ; identify= Carton.Identify gen as identify
       ; on_entry
       ; on_object
+      ; identify
       } ~digest filename =
-  let z = De.bigstring_create De.io_buffer_size in
+  let z = Bstr.create De.io_buffer_size in
   let seq = seq_of_filename filename in
   let seq =
     let window = De.make_window ~bits:15 in
     let allocate _bits = window in
-    Carton.First_pass.of_seq ~output:z ~allocate ~ref_length ~digest
-      ~identify:gen seq
+    Carton.First_pass.of_seq ~output:z ~allocate ~ref_length ~digest seq
   in
   let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in
   let oracle = compile ~on:on_entry ~identify ~digest_length seq in
@@ -371,8 +383,7 @@ type delta = { source: Carton.Uid.t; depth: int; raw: Cachet.Bstr.t }
 
 let entries_of_pack ~cfg ~digest filename =
   let raw = Hashtbl.create 0x7ff in
-  let (Identify gen) = cfg.identify in
-  let z = De.bigstring_create De.io_buffer_size in
+  let z = Bstr.create De.io_buffer_size in
   let t =
     make ?pagesize:cfg.pagesize ?cachesize:cfg.cachesize ~z
       ~ref_length:cfg.ref_length filename
@@ -390,7 +401,7 @@ let entries_of_pack ~cfg ~digest filename =
     let window = De.make_window ~bits:15 in
     let allocate _bits = window in
     Carton.First_pass.of_seq ~output:z ~allocate ~ref_length:cfg.ref_length
-      ~digest ~identify:gen seq
+      ~digest seq
   in
   let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in
   let oracle = compile ~on ~identify:cfg.identify ~digest_length seq in
@@ -596,7 +607,7 @@ let verify_from_idx
     (fst fd, idx)
   in
   let pack =
-    let z = De.bigstring_create De.io_buffer_size in
+    let z = Bstr.create De.io_buffer_size in
     let index (uid : Carton.Uid.t) =
       let uid = Classeur.uid_of_string_exn idx (uid :> string) in
       Classeur.find_offset idx uid
@@ -740,8 +751,7 @@ let to_pack ?with_header ?with_signature ?cursor ?level ~load targets =
     let dst = ctx.buffers.o in
     match Cartonnage.Encoder.encode ~o:dst encoder with
     | `Flush (encoder, len) ->
-        let bstr = Cachet.Bstr.of_bigstring dst in
-        let str = Cachet.Bstr.sub_string bstr ~off:0 ~len in
+        let str = Bstr.sub_string dst ~off:0 ~len in
         let signature = Option.map (digest str) ctx.signature in
         let encoder =
           Cartonnage.Encoder.dst encoder dst 0 (Bigarray.Array1.dim dst)
@@ -823,7 +833,7 @@ let delta_from_pack ~ref_length ~windows =
     | _, Some { source; raw; _ } when Hashtbl.mem stored source -> begin
         match Hashtbl.find_opt stored source with
         | Some depth ->
-            let raw = (raw :> Cachet.bigstring) in
+            let raw = (raw :> Bstr.t) in
             let patch = Cartonnage.Patch.of_copy ~depth ~source raw in
             Cartonnage.Target.make ~patch entry
         | None -> Cartonnage.Target.make entry

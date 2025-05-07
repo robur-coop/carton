@@ -18,6 +18,7 @@ depends: [
   "duff" {>= "0.5"}
   "optint"
   "checkseum"
+  "bstr"
   "decompress" {>= "1.5.0"}
   "logs"
   "ohex"

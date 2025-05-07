@@ -5,47 +5,31 @@ let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let pp_ofs_delta ppf abs_offset = Fmt.pf ppf "Δ(%08x)" abs_offset
 let pp_ref_delta ppf ptr = Fmt.pf ppf "Δ(%a)" Carton.Uid.pp ptr
 
-let git_identify =
-  let pp_kind ppf = function
-    | `A -> Fmt.string ppf "commit"
-    | `B -> Fmt.string ppf "tree"
-    | `C -> Fmt.string ppf "blob"
-    | `D -> Fmt.string ppf "tag"
-  in
-  let init kind (len : Carton.Size.t) =
-    let hdr = Fmt.str "%a %d\000" pp_kind kind (len :> int) in
-    let ctx = SHA1.empty in
-    SHA1.feed_string ctx hdr
-  in
-  let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
-  let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
-  { Carton.First_pass.init; feed; serialize }
-
-let pp_kind ~offset ppf = function
-  | Carton.First_pass.Base (`A, uid, _) ->
+let pp_kind ?uid ~offset ppf = function
+  | Carton.First_pass.Base `A ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Blue string)
         "a"
-        Fmt.(styled `Yellow Carton.Uid.pp)
-        uid
-  | Base (`B, uid, _) ->
+        Fmt.(styled `Yellow SHA1.pp)
+        (Option.get uid)
+  | Base `B ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Cyan string)
         "b"
-        Fmt.(styled `Yellow Carton.Uid.pp)
-        uid
-  | Base (`C, uid, _) ->
+        Fmt.(styled `Yellow SHA1.pp)
+        (Option.get uid)
+  | Base `C ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Green string)
         "c"
-        Fmt.(styled `Yellow Carton.Uid.pp)
-        uid
-  | Base (`D, uid, _) ->
+        Fmt.(styled `Yellow SHA1.pp)
+        (Option.get uid)
+  | Base `D ->
       Fmt.pf ppf "%a %a"
         Fmt.(styled `Magenta string)
         "d"
-        Fmt.(styled `Yellow Carton.Uid.pp)
-        uid
+        Fmt.(styled `Yellow SHA1.pp)
+        (Option.get uid)
   | Ofs { sub; _ } ->
       Fmt.pf ppf "%a" Fmt.(styled `Red pp_ofs_delta) (offset - sub)
   | Ref { ptr; _ } -> Fmt.pf ppf "%a" Fmt.(styled `Yellow pp_ref_delta) ptr
@@ -75,34 +59,56 @@ let seq_of_stdin () =
   in
   Seq.of_dispenser dispenser
 
+let empty (kind, size) =
+  let pp_kind ppf = function
+    | `A -> Fmt.string ppf "commit"
+    | `B -> Fmt.string ppf "tree"
+    | `C -> Fmt.string ppf "blob"
+    | `D -> Fmt.string ppf "tag"
+  in
+  let hdr = Fmt.str "%a %d\000" pp_kind kind size in
+  let ctx = SHA1.empty in
+  SHA1.feed_string ctx hdr
+
 let run _ digest (_filename, seq) =
   let output = De.bigstring_create 0x7ff in
   let allocate bits = De.make_window ~bits in
   let ref_length = SHA1.digest_size in
   let seq =
-    Carton.First_pass.of_seq ~output ~allocate ~ref_length ~digest
-      ~identify:git_identify seq
+    Carton.First_pass.of_seq ~output ~allocate ~ref_length ~digest seq
   in
-  let rec go seq =
+  let rec go ctx seq =
     match Seq.uncons seq with
-    | Some (`Number _, seq) -> go seq
+    | Some (`Number _, seq) -> go ctx seq
+    | Some (`Inflate (None, _), seq) -> go ctx seq
+    | Some (`Inflate (Some (kind, size), str), seq) -> begin
+        match ctx with
+        | None ->
+            let ctx = empty (kind, size) in
+            let ctx = SHA1.feed_string ctx str in
+            go (Some ctx) seq
+        | Some ctx ->
+            let ctx = SHA1.feed_string ctx str in
+            go (Some ctx) seq
+      end
     | Some (`Entry entry, seq) ->
         let offset = entry.Carton.First_pass.offset in
         let kind = entry.Carton.First_pass.kind in
         let size = (entry.Carton.First_pass.size :> int) in
         let consumed = entry.Carton.First_pass.consumed in
         let crc = Optint.to_int32 entry.Carton.First_pass.crc in
-        Fmt.pr "%010x: %a\n%!" offset (pp_kind ~offset) kind;
+        let uid = Option.map SHA1.get ctx in
+        Fmt.pr "%010x: %a\n%!" offset (pp_kind ?uid ~offset) kind;
         Fmt.pr "      size: %a\n%!" pp_bytes (size :> int);
         Fmt.pr "  consumed: %a\n%!" pp_bytes consumed;
         Fmt.pr "       crc: %08lx\n%!" crc;
-        go seq
+        go None seq
     | Some (`Hash hash, seq) ->
         Fmt.pr "%s\n%!" (Ohex.encode hash);
-        go seq
+        go None seq
     | None -> Ok ()
   in
-  go seq
+  go None seq
 
 open Cmdliner
 open Args

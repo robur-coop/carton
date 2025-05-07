@@ -5,53 +5,6 @@ let src = Logs.Src.create "carton"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-external bigstring_get_uint8 : De.bigstring -> int -> int = "%caml_ba_ref_1"
-
-external bigstring_set_uint8 : De.bigstring -> int -> int -> unit
-  = "%caml_ba_set_1"
-
-external bigstring_set_int32_ne : De.bigstring -> int -> int32 -> unit
-  = "%caml_bigstring_set32"
-
-let bigstring_blit_from_bytes src ~src_off dst ~dst_off ~len =
-  let len0 = len land 3 in
-  let len1 = len lsr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = Bytes.get_int32_ne src (src_off + i) in
-    bigstring_set_int32_ne dst (dst_off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = Bytes.get_uint8 src (src_off + i) in
-    bigstring_set_uint8 dst (dst_off + i) v
-  done
-
-let bigstring_blit_from_string src ~src_off dst ~dst_off ~len =
-  bigstring_blit_from_bytes
-    (Bytes.unsafe_of_string src)
-    ~src_off dst ~dst_off ~len
-
-let bigstring_of_string str =
-  let len = String.length str in
-  let bstr = Bigarray.Array1.create Bigarray.char Bigarray.c_layout len in
-  bigstring_blit_from_bytes
-    (Bytes.unsafe_of_string str)
-    ~src_off:0 bstr ~dst_off:0 ~len;
-  bstr
-
-let bigstring_copy bstr =
-  let len = Bigarray.Array1.dim bstr in
-  let bstr' = Bigarray.Array1.create Bigarray.char Bigarray.c_layout len in
-  Cachet.memcpy bstr ~src_off:0 bstr' ~dst_off:0 ~len;
-  bstr'
-
-let input_bigstring ic buf off len =
-  let tmp = Bytes.create len in
-  let len = input ic tmp 0 len in
-  bigstring_blit_from_bytes tmp ~src_off:0 buf ~dst_off:off ~len;
-  len
-
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 let failwithf fmt = Format.kasprintf failwith fmt
 
@@ -99,30 +52,24 @@ end
 module First_pass = struct
   type 'ctx hash = {
       feed_bytes: bytes -> off:int -> len:int -> 'ctx -> 'ctx
-    ; feed_bigstring: De.bigstring -> 'ctx -> 'ctx
+    ; feed_bigstring: Bstr.t -> 'ctx -> 'ctx
     ; serialize: 'ctx -> string
     ; length: int
   }
 
   type digest = Digest : 'ctx hash * 'ctx -> digest
-  type src = [ `Channel of in_channel | `String of string | `Manual ]
+  type src = [ `String of string | `Manual ]
 
   type 'ctx identify = {
       init: Kind.t -> Size.t -> 'ctx
-    ; feed: De.bigstring -> 'ctx -> 'ctx
+    ; feed: Bstr.t -> 'ctx -> 'ctx
     ; serialize: 'ctx -> Uid.t
   }
 
-  type 'ctx base_state =
-    | Epsilon : 'ctx identify -> 'ctx base_state
-    | Compute_base : 'ctx * 'ctx identify -> 'ctx base_state
-
-  type gen = Gen : 'ctx base_state -> gen
-
   type kind =
-    | Base of Kind.t * Uid.t * string list
-    | Ofs of { sub: int; source: int; target: int; inflate: string list }
-    | Ref of { ptr: string; source: int; target: int; inflate: string list }
+    | Base of Kind.t
+    | Ofs of { sub: int; source: int; target: int }
+    | Ref of { ptr: string; source: int; target: int }
 
   let digest bstr ?(off = 0) ?len
       (Digest (({ feed_bigstring; _ } as hash), ctx)) =
@@ -138,7 +85,7 @@ module First_pass = struct
 
   type decoder = {
       src: src
-    ; input: De.bigstring
+    ; input: Bstr.t
     ; input_pos: int
     ; input_len: int
     ; number_of_objects: int
@@ -150,23 +97,23 @@ module First_pass = struct
       consumed: int64
     ; (* how many bytes consumed *)
       state: state
-    ; output: De.bigstring
-    ; tmp: De.bigstring
+    ; output: Bstr.t
+    ; tmp: Bstr.t
     ; tmp_len: int
     ; tmp_need: int
     ; tmp_peek: int
     ; zlib: Zl.Inf.decoder
     ; ref_length: int
     ; digest: digest
-    ; identify: gen
     ; k: decoder -> decode
   }
 
-  and state = Header | Entry | Inflate of entry | Hash
+  and state = Header | Entry_header | Inflate of entry | Entry of entry | Hash
 
   and decode =
     [ `Await of decoder
     | `Peek of decoder
+    | `Inflate of string * decoder
     | `Entry of entry * decoder
     | `End of string
     | `Malformed of string ]
@@ -177,9 +124,8 @@ module First_pass = struct
     ; size: int
     ; consumed: int
     ; crc: Optint.t
+    ; number: int
   }
-
-  [@@@warning "+30"]
 
   open Checkseum
 
@@ -194,30 +140,19 @@ module First_pass = struct
 
   let bstr_length = Bigarray.Array1.dim
   let ( +! ) = Int64.add
+  let ( -! ) = Int64.sub
 
   let with_source source entry =
     match entry.kind with
-    | Ofs { sub; target; inflate; _ } ->
-        { entry with kind= Ofs { sub; source; target; inflate } }
-    | Ref { ptr; target; inflate; _ } ->
-        { entry with kind= Ref { ptr; source; target; inflate } }
+    | Ofs { sub; target; _ } -> { entry with kind= Ofs { sub; source; target } }
+    | Ref { ptr; target; _ } -> { entry with kind= Ref { ptr; source; target } }
     | _ -> entry
 
   let with_target target entry =
     match entry.kind with
-    | Ofs { sub; source; inflate; _ } ->
-        { entry with kind= Ofs { sub; source; target; inflate } }
-    | Ref { ptr; source; inflate; _ } ->
-        { entry with kind= Ref { ptr; source; target; inflate } }
+    | Ofs { sub; source; _ } -> { entry with kind= Ofs { sub; source; target } }
+    | Ref { ptr; source; _ } -> { entry with kind= Ref { ptr; source; target } }
     | _ -> entry
-
-  let with_inflate inflate entry =
-    match entry.kind with
-    | Ofs { sub; source; target; _ } ->
-        { entry with kind= Ofs { sub; source; target; inflate } }
-    | Ref { ptr; source; target; _ } ->
-        { entry with kind= Ref { ptr; source; target; inflate } }
-    | Base (kind, hash, _) -> { entry with kind= Base (kind, hash, inflate) }
 
   let source entry =
     match entry.kind with
@@ -229,19 +164,25 @@ module First_pass = struct
     | Ofs { target; _ } | Ref { target; _ } -> target
     | _ -> assert false
 
-  let inflate entry =
-    match entry.kind with
-    | Ofs { inflate; _ } | Ref { inflate; _ } -> inflate
-    | Base (_, _, inflate) -> inflate
+  let is_first entry =
+    let source = source entry in
+    let target = target entry in
+    source == -1 && target == -1
 
   let number_of_objects { number_of_objects; _ } = number_of_objects
   let version { version; _ } = version
   let counter_of_objects { counter_of_objects; _ } = counter_of_objects
   let is_inflate = function Inflate _ -> true | _ -> false
+
+  let kind decoder =
+    match decoder.state with
+    | Inflate { kind= Base kind; size; _ } -> Some (kind, size)
+    | _ -> None
+
   let src_rem decoder = decoder.input_len - decoder.input_pos + 1
 
   let end_of_input decoder =
-    { decoder with input= De.bigstring_empty; input_pos= 0; input_len= min_int }
+    { decoder with input= Bstr.empty; input_pos= 0; input_len= min_int }
 
   let malformedf fmt = Format.kasprintf (fun err -> `Malformed err) fmt
   let hash { digest; _ } = digest
@@ -266,29 +207,11 @@ module First_pass = struct
   let refill k decoder =
     match decoder.src with
     | `String _ -> k (end_of_input decoder)
-    | `Channel ic ->
-        let len =
-          input_bigstring ic decoder.input 0 (bstr_length decoder.input)
-        in
-        k (src decoder decoder.input 0 len)
     | `Manual -> `Await { decoder with k }
 
   let rec peek k decoder =
     match decoder.src with
     | `String _ -> malformedf "First_pass.peek: unexpected end of input"
-    | `Channel ic ->
-        let rem = src_rem decoder in
-        if rem < decoder.tmp_peek then begin
-          let src_off = decoder.input_pos in
-          Cachet.memmove decoder.input ~src_off decoder.input ~dst_off:0
-            ~len:rem;
-          let len =
-            input_bigstring ic decoder.input rem
-              (bstr_length decoder.input - rem)
-          in
-          peek k (src decoder decoder.input 0 (rem + len))
-        end
-        else k decoder
     | `Manual ->
         let rem = src_rem decoder in
         if rem < decoder.tmp_peek then begin
@@ -333,7 +256,7 @@ module First_pass = struct
     let i = ref 0 in
     let len = ref 0 in
     while
-      let cmd = bigstring_get_uint8 buf !p in
+      let cmd = Bstr.get_uint8 buf !p in
       incr p;
       len := !len lor ((cmd land 0x7f) lsl !i);
       i := !i + 7;
@@ -344,32 +267,6 @@ module First_pass = struct
     (!p - off, !len)
 
   let _max_int31 = 2147483647l (* (1 << 31) - 1 *)
-
-  (*
-  let check_header :
-      type fd s. s scheduler -> (fd, s) read -> fd -> (int * string * int, s) io
-      =
-   fun { bind; return } read fd ->
-    let ( >>= ) = bind in
-    let tmp = Bytes.create 12 in
-    read fd tmp ~off:0 ~len:12 >>= fun len ->
-    if len < 12 then invalid_argf "First_pass.check_header: invalid PACK file";
-    let header = Bytes.get_int32_be tmp 0 in
-    let version = Bytes.get_int32_be tmp 4 in
-    let number_of_objects = Bytes.get_int32_be tmp 8 in
-    if header <> 0x5041434bl then
-      invalid_argf
-        "First_pass.check_header: invalid PACK file (header: %lx <> %lx)" header
-        0x5041434bl;
-    if version <> 2l then
-      invalid_argf
-        "First_pass.check_header: invalid version of PACK file (%04lx)" version;
-    if number_of_objects > _max_int31 && Sys.word_size = 32 then
-      invalid_argf
-        "First_pass.check_header: too huge PACK file for a 32-bits machine";
-    return (Int32.to_int number_of_objects, Bytes.unsafe_to_string tmp, len)
-*)
-
   let peek_15 k decoder = peek k (tmp_peek decoder 15)
 
   let peek_uid k decoder =
@@ -380,10 +277,10 @@ module First_pass = struct
         (* zlib *)
         2))
 
-  let rec k_ref_header crc offset size decoder =
+  let rec ref_header crc offset size decoder =
     let anchor = decoder.input_pos in
-    let bstr = Cachet.Bstr.of_bigstring decoder.input in
-    let ptr = Cachet.Bstr.sub_string bstr ~off:anchor ~len:decoder.ref_length in
+    let off = anchor and len = decoder.ref_length in
+    let ptr = Bstr.sub_string decoder.input ~off ~len in
     let crc = crc_decoder decoder ~len:decoder.ref_length crc in
     let decoder = digest_decoder decoder ~len:decoder.ref_length in
     let decoder = { decoder with input_pos= anchor + decoder.ref_length } in
@@ -392,10 +289,11 @@ module First_pass = struct
     let entry =
       {
         offset
-      ; kind= Ref { ptr; source= -1; target= -1; inflate= [] }
+      ; kind= Ref { ptr; source= -1; target= -1 }
       ; size
       ; consumed= 0
       ; crc
+      ; number= decoder.counter_of_objects
       }
     in
     (decode [@tailcall])
@@ -407,14 +305,14 @@ module First_pass = struct
       ; k= decode
       }
 
-  and k_ofs_header crc offset size decoder =
+  and ofs_header crc offset size decoder =
     let p = ref decoder.input_pos in
-    let c = ref (bigstring_get_uint8 decoder.input !p) in
+    let c = ref (Bstr.get_uint8 decoder.input !p) in
     incr p;
     let base_offset = ref (!c land 127) in
     while !c land 128 != 0 do
       incr base_offset;
-      c := bigstring_get_uint8 decoder.input !p;
+      c := Bstr.get_uint8 decoder.input !p;
       incr p;
       base_offset := (!base_offset lsl 7) + (!c land 127)
     done;
@@ -427,10 +325,11 @@ module First_pass = struct
     let entry =
       {
         offset
-      ; kind= Ofs { sub= !base_offset; source= -1; target= -1; inflate= [] }
+      ; kind= Ofs { sub= !base_offset; source= -1; target= -1 }
       ; size
       ; consumed= 0
       ; crc
+      ; number= decoder.counter_of_objects
       }
     in
     (decode [@tailcall])
@@ -442,17 +341,17 @@ module First_pass = struct
       ; k= decode
       }
 
-  and k_header decoder =
+  and entry_header decoder =
     Log.debug (fun m ->
         m "object %d/%d" decoder.counter_of_objects decoder.number_of_objects);
     let p = ref decoder.input_pos in
-    let c = ref (bigstring_get_uint8 decoder.input !p) in
+    let c = ref (Bstr.get_uint8 decoder.input !p) in
     incr p;
     let kind = (!c asr 4) land 7 in
     let size = ref (!c land 15) in
     let shft = ref 4 in
     while !c land 0x80 != 0 do
-      c := bigstring_get_uint8 decoder.input !p;
+      c := Bstr.get_uint8 decoder.input !p;
       incr p;
       size := !size + ((!c land 0x7f) lsl !shft);
       shft := !shft + 7
@@ -478,20 +377,12 @@ module First_pass = struct
         let entry =
           {
             offset= Int64.to_int decoder.consumed
-          ; kind= Base (kind, "", [])
+          ; kind= Base kind
           ; size= !size
           ; consumed= 0
           ; crc
+          ; number= decoder.counter_of_objects
           }
-        in
-        let identify =
-          match decoder.identify with
-          | Gen (Epsilon gen) ->
-              let ctx = gen.init kind !size in
-              Gen (Compute_base (ctx, gen))
-          | Gen (Compute_base (_, gen)) ->
-              let ctx = gen.init kind !size in
-              Gen (Compute_base (ctx, gen))
         in
         decode
           {
@@ -499,13 +390,12 @@ module First_pass = struct
             consumed= decoder.consumed +! Int64.of_int len
           ; counter_of_objects= succ decoder.counter_of_objects
           ; state= Inflate entry
-          ; identify
           ; k= decode
           }
     | 0b110 ->
         let offset = Int64.to_int decoder.consumed in
-        peek_15
-          (k_ofs_header crc offset !size)
+        let k = ofs_header crc offset !size in
+        peek_15 k
           {
             decoder with
             input_pos= !p
@@ -513,8 +403,8 @@ module First_pass = struct
           }
     | 0b111 ->
         let offset = Int64.to_int decoder.consumed in
-        peek_uid
-          (k_ref_header crc offset !size)
+        let k = ref_header crc offset !size in
+        peek_uid k
           {
             decoder with
             input_pos= !p
@@ -522,240 +412,210 @@ module First_pass = struct
           }
     | _ -> assert false (* NOTE(dinosaure): impossible due to our mask. *)
 
+  and refill_12 k t =
+    if src_rem t >= 12 then
+      k t.input t.input_pos
+        { t with input_pos= t.input_pos + 12; consumed= t.consumed +! 12L }
+    else tmp_fill (k t.tmp 0) (tmp_need t 12)
+
+  and refill_uid k t =
+    let required = length_of_hash t.digest in
+    if src_rem t >= required then
+      k t.input t.input_pos
+        {
+          t with
+          input_pos= t.input_pos + required
+        ; consumed= t.consumed +! Int64.of_int required
+        }
+    else tmp_fill (k t.tmp 0) (tmp_need t required)
+
+  and verify_pack_header buf off decoder =
+    let version = Bstr.get_int32_be buf (off + 4) in
+    let number_of_objects = Bstr.get_int32_be buf (off + 8) in
+    if version <> 2l then
+      invalid_argf "Invalid version of PACK file (%04lx)" version;
+    (* XXX(dinosaure): or [malformedf]? *)
+    if number_of_objects > _max_int31 && Sys.word_size = 32 then
+      failwith "Too huge PACK file for a 32-bits machine";
+    let digest = digest buf ~off ~len:12 decoder.digest in
+    if decoder.counter_of_objects == Int32.to_int number_of_objects then
+      decode
+        {
+          decoder with
+          version= Int32.to_int version
+        ; number_of_objects= Int32.to_int number_of_objects
+        ; state= Hash
+        ; k= decode
+        ; digest
+        }
+    else
+      decode
+        {
+          decoder with
+          version= Int32.to_int version
+        ; number_of_objects= Int32.to_int number_of_objects
+        ; state= Entry_header
+        ; k= decode
+        ; digest
+        }
+
+  and verify_signature buf off decoder =
+    let have = serialize decoder.digest in
+    let expect = Bstr.sub_string buf ~off ~len:(String.length have) in
+    if String.equal expect have then `End have
+    else
+      malformedf "Invalid hash (%s != %s)" (Ohex.encode expect)
+        (Ohex.encode have)
+
   and decode decoder =
     match decoder.state with
-    | Header ->
-        let refill_12 k decoder =
-          if src_rem decoder >= 12 then
-            k decoder.input decoder.input_pos
-              {
-                decoder with
-                input_pos= decoder.input_pos + 12
-              ; consumed= decoder.consumed +! 12L
-              }
-          else tmp_fill (k decoder.tmp 0) (tmp_need decoder 12)
-        in
-        let k buf off decoder =
-          let bstr = Cachet.Bstr.of_bigstring buf in
-          let version = Cachet.Bstr.get_int32_be bstr (off + 4) in
-          let number_of_objects = Cachet.Bstr.get_int32_be bstr (off + 8) in
-          if version <> 2l then
-            invalid_argf
-              "First_pass.decode: invalid version of PACK file (%04lx)" version;
-          if number_of_objects > _max_int31 && Sys.word_size = 32 then
-            invalid_argf
-              "First_pass.decode: too huge PACK file for a 32-bits machine";
-          let digest = digest buf ~off ~len:12 decoder.digest in
-          if decoder.counter_of_objects == Int32.to_int number_of_objects then
-            decode
-              {
-                decoder with
-                version= Int32.to_int version
-              ; number_of_objects= Int32.to_int number_of_objects
-              ; state= Hash
-              ; k= decode
-              ; digest
-              }
-          else
-            decode
-              {
-                decoder with
-                version= Int32.to_int version
-              ; number_of_objects= Int32.to_int number_of_objects
-              ; state= Entry
-              ; k= decode
-              ; digest
-              }
-        in
-        refill_12 k decoder
-    | Entry ->
+    | Header -> refill_12 verify_pack_header decoder
+    | Entry_header ->
         (* TODO(dinosaure): we need something more robust than [15] where when
            it's not enough to have the ofs-header and the zlib-header,
            [decompress] returns an error - because we fill at the beginning the
            input buffer with [0] (then, we reach end-of-input). *)
-        peek_15 k_header decoder
-    | Inflate ({ kind= Base (kind, _, inflate); crc; _ } as entry) ->
-        let rec go identify inflate zlib =
-          match Zl.Inf.decode zlib with
-          | `Await zlib ->
-              let len = src_rem decoder - Zl.Inf.src_rem zlib in
-              let crc = crc_decoder decoder ~len crc in
-              let decoder = digest_decoder decoder ~len in
-              let entry = with_inflate inflate entry in
-              refill decode
-                {
-                  decoder with
-                  zlib
-                ; identify
-                ; input_pos= decoder.input_pos + len
-                ; consumed= decoder.consumed +! Int64.of_int len
-                ; state= Inflate { entry with crc }
-                }
-          | `Flush zlib ->
-              let len =
-                Bigarray.Array1.dim decoder.output - Zl.Inf.dst_rem zlib
-              in
-              let bstr = Bigarray.Array1.sub decoder.output 0 len in
-              let str = Zh.bigstring_sub_string bstr ~off:0 ~len in
-              let identify =
-                match identify with
-                | Gen (Compute_base (ctx, gen)) ->
-                    Gen (Compute_base (gen.feed bstr ctx, gen))
-                | Gen (Epsilon _) -> assert false
-              in
-              go identify (str :: inflate) (Zl.Inf.flush zlib)
-          | `Malformed err -> malformedf "Pack.decode.inflate (base): %s" err
-          | `End zlib ->
-              let len =
-                Bigarray.Array1.dim decoder.output - Zl.Inf.dst_rem zlib
-              in
-              let bstr = Bigarray.Array1.sub decoder.output 0 len in
-              let uid =
-                match identify with
-                | Gen (Compute_base (ctx, gen)) ->
-                    gen.serialize (gen.feed bstr ctx)
-                | Gen (Epsilon _) -> assert false
-              in
-              let len = src_rem decoder - Zl.Inf.src_rem zlib in
-              let crc = crc_decoder decoder ~len crc in
-              let zlib = Zl.Inf.reset zlib in
-              let state =
-                if decoder.counter_of_objects == decoder.number_of_objects then
-                  Hash
-                else Entry
-              in
-              let decoder = digest_decoder decoder ~len in
-              let decoder =
-                {
-                  decoder with
-                  input_pos= decoder.input_pos + len
-                ; consumed= decoder.consumed +! Int64.of_int len
-                ; zlib
-                ; state
-                ; k= decode
-                }
-              in
-              let consumed =
-                Int64.(to_int (sub decoder.consumed (of_int entry.offset)))
-              in
-              let entry =
-                { entry with kind= Base (kind, uid, inflate); consumed; crc }
-              in
-              `Entry (entry, decoder)
-        in
-        go decoder.identify inflate decoder.zlib
-    | Inflate ({ kind= Ofs _ | Ref _; crc; _ } as entry) ->
-        let source = ref (source entry) in
-        let target = ref (target entry) in
-        let chunks = ref (inflate entry) in
-        let first = ref (!source = -1 && !target = -1) in
-        let rec go zlib =
-          match Zl.Inf.decode zlib with
-          | `Await zlib ->
-              let len = src_rem decoder - Zl.Inf.src_rem zlib in
-              let crc = crc_decoder decoder ~len crc in
-              let entry = with_source !source entry in
-              let entry = with_target !target entry in
-              let entry = with_inflate !chunks entry in
-              let decoder = digest_decoder decoder ~len in
-              refill decode
-                {
-                  decoder with
-                  zlib
-                ; input_pos= decoder.input_pos + len
-                ; consumed= decoder.consumed +! Int64.of_int len
-                ; state= Inflate { entry with crc }
-                }
-          | `Flush zlib ->
-              let len = bstr_length decoder.output - Zl.Inf.dst_rem zlib in
-              let str = Zh.bigstring_sub_string decoder.output ~off:0 ~len in
-              chunks := str :: !chunks;
-              if !first then begin
-                let len = bstr_length decoder.output - Zl.Inf.dst_rem zlib in
-                let x, src_len = variable_length decoder.output 0 len in
-                let _, dst_len = variable_length decoder.output x len in
-                source := src_len;
-                target := dst_len;
-                first := false
-              end;
-              go (Zl.Inf.flush zlib)
-          | `Malformed err -> malformedf "Pack.decode.inflate (delta): %s" err
-          | `End zlib ->
-              if !first then begin
-                let len = bstr_length decoder.output - Zl.Inf.dst_rem zlib in
-                let x, src_len = variable_length decoder.output 0 len in
-                let _, dst_len = variable_length decoder.output x len in
-                source := src_len;
-                target := dst_len;
-                first := false
-              end;
-              let len = src_rem decoder - Zl.Inf.src_rem zlib in
-              let crc = crc_decoder decoder ~len crc in
-              let zlib = Zl.Inf.reset zlib in
-              let state =
-                if decoder.counter_of_objects == decoder.number_of_objects then
-                  Hash
-                else Entry
-              in
-              let decoder = digest_decoder decoder ~len in
-              let decoder =
-                {
-                  decoder with
-                  input_pos= decoder.input_pos + len
-                ; consumed= decoder.consumed +! Int64.of_int len
-                ; zlib
-                ; state
-                ; k= decode
-                }
-              in
-              Log.debug (fun m -> m "%08Lx consumed" decoder.consumed);
-              let consumed =
-                Int64.(to_int (sub decoder.consumed (of_int entry.offset)))
-              in
-              let entry = { entry with crc; consumed } in
-              let entry = with_source !source entry in
-              let entry = with_target !target entry in
-              `Entry (entry, decoder)
-        in
-        go decoder.zlib
-    | Hash ->
-        let required = length_of_hash decoder.digest in
-        let refill_uid k decoder =
-          if src_rem decoder >= required then begin
-            Log.debug (fun m -> m "use the direct input buffer");
-            k decoder.input decoder.input_pos
+        peek_15 entry_header decoder
+    | Entry entry ->
+        if decoder.counter_of_objects == decoder.number_of_objects then
+          `Entry (entry, { decoder with state= Hash })
+        else `Entry (entry, { decoder with state= Entry_header })
+    | Inflate ({ kind= Base _; crc; _ } as entry) -> begin
+        Log.debug (fun m -> m "inflate base object");
+        match Zl.Inf.decode decoder.zlib with
+        | `Await zlib ->
+            let len = src_rem decoder - Zl.Inf.src_rem zlib in
+            let crc = crc_decoder decoder ~len crc in
+            let decoder = digest_decoder decoder ~len in
+            refill decode
               {
                 decoder with
-                input_pos= decoder.input_pos + required
-              ; consumed= decoder.consumed +! Int64.of_int required
+                zlib
+              ; input_pos= decoder.input_pos + len
+              ; consumed= decoder.consumed +! Int64.of_int len
+              ; state= Inflate { entry with crc }
               }
-          end
-          else begin
-            Log.debug (fun m -> m "use tmp buffer");
-            tmp_fill (k decoder.tmp 0) (tmp_need decoder required)
-          end
-        in
-        let k buf off decoder =
-          let have = serialize decoder.digest in
-          let bstr = Cachet.Bstr.of_bigstring buf in
-          let expect =
-            Cachet.Bstr.sub_string bstr ~off ~len:(String.length have)
-          in
-          if String.equal expect have then `End have
-          else
-            malformedf "Invalid hash (%s != %s)" (Ohex.encode expect)
-              (Ohex.encode have)
-        in
-        refill_uid k decoder
+        | `Flush zlib ->
+            let olen = Bstr.length decoder.output - Zl.Inf.dst_rem zlib in
+            let str = Bstr.sub_string decoder.output ~off:0 ~len:olen in
+            let ilen = src_rem decoder - Zl.Inf.src_rem zlib in
+            let crc = crc_decoder decoder ~len:ilen crc in
+            let decoder = digest_decoder decoder ~len:ilen in
+            let zlib = Zl.Inf.flush zlib in
+            let decoder =
+              {
+                decoder with
+                zlib
+              ; input_pos= decoder.input_pos + ilen
+              ; consumed= decoder.consumed +! Int64.of_int ilen
+              ; state= Inflate { entry with crc }
+              }
+            in
+            `Inflate (str, decoder)
+        | `Malformed err -> malformedf "Pack.decode.inflate (base): %s" err
+        | `End zlib ->
+            let olen = Bstr.length decoder.output - Zl.Inf.dst_rem zlib in
+            let str = Bstr.sub_string decoder.output ~off:0 ~len:olen in
+            let ilen = src_rem decoder - Zl.Inf.src_rem zlib in
+            let crc = crc_decoder decoder ~len:ilen crc in
+            let decoder = digest_decoder decoder ~len:ilen in
+            let zlib = Zl.Inf.reset zlib in
+            let decoder =
+              {
+                decoder with
+                input_pos= decoder.input_pos + ilen
+              ; consumed= decoder.consumed +! Int64.of_int ilen
+              ; zlib
+              ; k= decode
+              }
+            in
+            let consumed = Int64.(decoder.consumed -! of_int entry.offset) in
+            let consumed = Int64.to_int consumed in
+            let entry = { entry with consumed; crc } in
+            let state = Entry entry in
+            `Inflate (str, { decoder with state })
+      end
+    | Inflate ({ kind= Ofs _ | Ref _; crc; _ } as entry) -> begin
+        match Zl.Inf.decode decoder.zlib with
+        | `Await zlib ->
+            let len = src_rem decoder - Zl.Inf.src_rem zlib in
+            let crc = crc_decoder decoder ~len crc in
+            let decoder = digest_decoder decoder ~len in
+            refill decode
+              {
+                decoder with
+                zlib
+              ; input_pos= decoder.input_pos + len
+              ; consumed= decoder.consumed +! Int64.of_int len
+              ; state= Inflate { entry with crc }
+              }
+        | `Flush zlib ->
+            let olen = Bstr.length decoder.output - Zl.Inf.dst_rem zlib in
+            let str = Bstr.sub_string decoder.output ~off:0 ~len:olen in
+            let ilen = src_rem decoder - Zl.Inf.src_rem zlib in
+            let crc = crc_decoder decoder ~len:ilen crc in
+            let entry =
+              if is_first entry then
+                let x, src_len = variable_length decoder.output 0 olen in
+                let _, dst_len = variable_length decoder.output x (olen - x) in
+                let entry = with_source src_len entry in
+                let entry = with_target dst_len entry in
+                { entry with crc }
+              else { entry with crc }
+            in
+            let decoder = digest_decoder decoder ~len:ilen in
+            let zlib = Zl.Inf.flush zlib in
+            let decoder =
+              {
+                decoder with
+                zlib
+              ; input_pos= decoder.input_pos + ilen
+              ; consumed= decoder.consumed +! Int64.of_int ilen
+              ; state= Inflate entry
+              }
+            in
+            `Inflate (str, decoder)
+        | `Malformed err -> malformedf "Pack.decode.inflate (delta): %s" err
+        | `End zlib ->
+            let olen = Bstr.length decoder.output - Zl.Inf.dst_rem zlib in
+            let str = Bstr.sub_string decoder.output ~off:0 ~len:olen in
+            let ilen = src_rem decoder - Zl.Inf.src_rem zlib in
+            let crc = crc_decoder decoder ~len:ilen crc in
+            let entry =
+              if is_first entry then
+                let x, src_len = variable_length decoder.output 0 olen in
+                let _, dst_len = variable_length decoder.output x (olen - x) in
+                let entry = with_source src_len entry in
+                let entry = with_target dst_len entry in
+                { entry with crc }
+              else { entry with crc }
+            in
+            let zlib = Zl.Inf.reset zlib in
+            let decoder = digest_decoder decoder ~len:ilen in
+            let decoder =
+              {
+                decoder with
+                input_pos= decoder.input_pos + ilen
+              ; consumed= decoder.consumed +! Int64.of_int ilen
+              ; zlib
+              ; k= decode
+              }
+            in
+            let consumed = Int64.(decoder.consumed -! of_int entry.offset) in
+            let consumed = Int64.to_int consumed in
+            let entry = { entry with consumed } in
+            let state = Entry entry in
+            `Inflate (str, { decoder with state })
+      end
+    | Hash -> refill_uid verify_signature decoder
 
-  let decoder ~output ~allocate ~ref_length ~digest ~identify src =
+  let decoder ~output ~allocate ~ref_length ~digest src =
     let input, input_pos, input_len =
       match src with
-      | `Manual -> (De.bigstring_empty, 1, 0)
+      | `Manual -> (Bstr.empty, 1, 0)
       | `String str ->
-          let input = bigstring_of_string str in
+          let input = Bstr.of_string str in
           (input, 0, String.length str - 1)
-      | `Channel _ -> (De.bigstring_create Zl.io_buffer_size, 1, 0)
     in
     {
       src
@@ -768,7 +628,7 @@ module First_pass = struct
     ; consumed= 0L
     ; output
     ; state= Header
-    ; tmp= De.bigstring_create (Int.min 20 (length_of_hash digest))
+    ; tmp= Bstr.create (Int.min 20 (length_of_hash digest))
     ; tmp_len= 0
     ; tmp_need= 0
     ; tmp_peek= 0
@@ -776,13 +636,12 @@ module First_pass = struct
     ; ref_length
     ; k= decode
     ; digest
-    ; identify= Gen (Epsilon identify)
     }
 
   let decode decoder = decoder.k decoder
 
-  let of_seq ~output ~allocate ~ref_length ~digest ~identify seq =
-    let input = De.bigstring_create De.io_buffer_size in
+  let of_seq ~output ~allocate ~ref_length ~digest seq =
+    let input = Bstr.create De.io_buffer_size in
     let first = ref true in
     let rec go decoder seq (str, src_off, src_len) () =
       match decode decoder with
@@ -791,15 +650,15 @@ module First_pass = struct
             match Seq.uncons seq with
             | Some (str, seq) ->
                 let len = Int.min (bstr_length input) (String.length str) in
-                bigstring_blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+                Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
                 let decoder = src decoder input 0 len in
                 go decoder seq (str, len, String.length str - len) ()
             | None ->
-                let decoder = src decoder De.bigstring_empty 0 0 in
+                let decoder = src decoder Bstr.empty 0 0 in
                 go decoder seq (String.empty, 0, 0) ()
           else begin
             let len = Int.min (bstr_length input) src_len in
-            bigstring_blit_from_string str ~src_off input ~dst_off:0 ~len;
+            Bstr.blit_from_string str ~src_off input ~dst_off:0 ~len;
             let decoder = src decoder input 0 len in
             go decoder seq (str, src_off + len, src_len - len) ()
           end
@@ -811,18 +670,24 @@ module First_pass = struct
                 let len =
                   Int.min (bstr_length input - dst_off) (String.length str)
                 in
-                bigstring_blit_from_string str ~src_off:0 input ~dst_off ~len;
+                Bstr.blit_from_string str ~src_off:0 input ~dst_off ~len;
                 let decoder = src decoder input 0 (dst_off + len) in
                 go decoder seq (str, len, String.length str - len) ()
             | None ->
-                let decoder = src decoder De.bigstring_empty 0 0 in
+                let decoder = src decoder Bstr.empty 0 0 in
                 go decoder seq (String.empty, 0, 0) ()
           else begin
             let len = Int.min (bstr_length input - dst_off) src_len in
-            bigstring_blit_from_string str ~src_off input ~dst_off ~len;
+            Bstr.blit_from_string str ~src_off input ~dst_off ~len;
             let decoder = src decoder input 0 (dst_off + len) in
             go decoder seq (str, src_off + len, src_len - len) ()
           end
+      | `Inflate (payload, decoder) ->
+          let next = go decoder seq (str, src_off, src_len) in
+          let kind = kind decoder in
+          Log.debug (fun m ->
+              m "emit inflated payload (base? %b)" (Option.is_some kind));
+          Seq.Cons (`Inflate (kind, payload), next)
       | `Entry (entry, decoder) ->
           let next = go decoder seq (str, src_off, src_len) in
           begin
@@ -837,22 +702,20 @@ module First_pass = struct
       | `Malformed err -> failwith err
       | `End hash -> Seq.Cons (`Hash hash, Fun.const Seq.Nil)
     in
-    let decoder =
-      decoder ~output ~allocate ~ref_length ~digest ~identify `Manual
-    in
+    let decoder = decoder ~output ~allocate ~ref_length ~digest `Manual in
     go decoder seq (String.empty, 0, 0)
 end
 
 let _max_depth = 60
 
 module Blob = struct
-  type t = { raw0: De.bigstring; raw1: De.bigstring; flip: bool }
+  type t = { raw0: Bstr.t; raw1: Bstr.t; flip: bool }
 
   let make ~size =
-    let raw = De.bigstring_create (size * 2) in
+    let raw = Bstr.create (size * 2) in
     {
-      raw0= Bigarray.Array1.sub raw 0 size
-    ; raw1= Bigarray.Array1.sub raw size size
+      raw0= Bstr.sub raw ~off:0 ~len:size
+    ; raw1= Bstr.sub raw ~off:size ~len:size
     ; flip= false
     }
 
@@ -863,9 +726,9 @@ module Blob = struct
 
   let of_string str =
     let len = String.length str in
-    let raw0 = De.bigstring_create len in
-    bigstring_blit_from_string str ~src_off:0 raw0 ~dst_off:0 ~len;
-    { raw0; raw1= De.bigstring_empty; flip= true }
+    let raw0 = Bstr.create len in
+    Bstr.blit_from_string str ~src_off:0 raw0 ~dst_off:0 ~len;
+    { raw0; raw1= Bstr.empty; flip= true }
 
   let with_source t ~source =
     if t.flip then { t with raw1= source } else { t with raw0= source }
@@ -885,7 +748,7 @@ module Value = struct
 
   let make ~kind ?(depth = 1) bstr =
     let len = Bigarray.Array1.dim bstr in
-    let blob = { Blob.raw0= bstr; raw1= De.bigstring_empty; flip= true } in
+    let blob = { Blob.raw0= bstr; raw1= Bstr.empty; flip= true } in
     { kind; blob; len; depth }
 
   let of_blob ~kind ~length:len ?(depth = 1) blob = { kind; blob; len; depth }
@@ -897,8 +760,7 @@ module Value = struct
 
   let string { blob; len; _ } =
     let bstr = Blob.payload blob in
-    let bstr = Cachet.Bstr.of_bigstring bstr in
-    Cachet.Bstr.sub_string bstr ~off:0 ~len
+    Bstr.sub_string bstr ~off:0 ~len
 
   let pp ppf t =
     Format.fprintf ppf "{ @[<hov>kind= %a;@ len= %d;@ depth= %d;@] }" Kind.pp
@@ -909,7 +771,7 @@ type 'fd t = {
     cache: 'fd Cachet.t
   ; where: string -> int
   ; ref_length: int
-  ; tmp: De.bigstring
+  ; tmp: Bstr.t
   ; allocate: int -> Zl.window
 }
 
@@ -937,7 +799,7 @@ let copy t =
     cache= Cachet.copy t.cache
   ; where= t.where
   ; ref_length= t.ref_length
-  ; tmp= bigstring_copy t.tmp
+  ; tmp= Bstr.copy t.tmp
   ; allocate= t.allocate
   }
 
@@ -950,10 +812,10 @@ let size_of_delta t ~cursor size =
     | `Await decoder -> begin
         match Cachet.next t.cache slice with
         | None ->
-            let decoder = Zh.M.src decoder De.bigstring_empty 0 0 in
+            let decoder = Zh.M.src decoder Bstr.empty 0 0 in
             (go [@tailcall]) slice decoder
         | Some ({ payload; length; _ } as slice) ->
-            let decoder = Zh.M.src decoder (payload :> De.bigstring) 0 length in
+            let decoder = Zh.M.src decoder (payload :> Bstr.t) 0 length in
             (go [@tailcall]) slice decoder
       end
   in
@@ -963,7 +825,7 @@ let size_of_delta t ~cursor size =
   | Some ({ offset; payload; length } as slice) ->
       let off = cursor - offset in
       let len = length - off in
-      let decoder = Zh.M.src decoder (payload :> De.bigstring) off len in
+      let decoder = Zh.M.src decoder (payload :> Bstr.t) off len in
       go slice decoder
   | None -> raise (Cachet.Out_of_bounds cursor)
 
@@ -1096,12 +958,10 @@ let uncompress t kind blob ~cursor =
     | `Await decoder -> (
         match Cachet.next t.cache slice with
         | Some ({ payload; length; _ } as slice) ->
-            let decoder =
-              Zl.Inf.src decoder (payload :> De.bigstring) 0 length
-            in
+            let decoder = Zl.Inf.src decoder (payload :> Bstr.t) 0 length in
             (go [@tailcall]) ~real_length ~flushed slice decoder
         | None ->
-            let decoder = Zl.Inf.src decoder De.bigstring_empty 0 0 in
+            let decoder = Zl.Inf.src decoder Bstr.empty 0 0 in
             (go [@tailcall]) ~real_length ~flushed slice decoder)
   in
   Log.debug (fun m -> m "load %08x" cursor);
@@ -1110,7 +970,7 @@ let uncompress t kind blob ~cursor =
       let off = cursor - offset in
       let len = length - off in
       let decoder = Zl.Inf.decoder `Manual ~o ~allocate:t.allocate in
-      let decoder = Zl.Inf.src decoder (payload :> De.bigstring) off len in
+      let decoder = Zl.Inf.src decoder (payload :> Bstr.t) off len in
       go ~real_length:0 ~flushed:false slice decoder
   | None -> assert false
 
@@ -1136,10 +996,10 @@ let of_delta t kind blob ~depth ~cursor =
     | `Await decoder -> begin
         match Cachet.next t.cache slice with
         | None ->
-            let decoder = Zh.M.src decoder De.bigstring_empty 0 0 in
+            let decoder = Zh.M.src decoder Bstr.empty 0 0 in
             (go [@tailcall]) slice blob decoder
         | Some ({ payload; length; _ } as slice) ->
-            let decoder = Zh.M.src decoder (payload :> De.bigstring) 0 length in
+            let decoder = Zh.M.src decoder (payload :> Bstr.t) 0 length in
             (go [@tailcall]) slice blob decoder
       end
   in
@@ -1148,7 +1008,7 @@ let of_delta t kind blob ~depth ~cursor =
   | Some ({ offset; payload; length } as slice) ->
       let off = cursor - offset in
       let len = length - off in
-      let decoder = Zh.M.src decoder (payload :> De.bigstring) off len in
+      let decoder = Zh.M.src decoder (payload :> Bstr.t) off len in
       go slice blob decoder
   | None -> assert false
 
@@ -1169,6 +1029,7 @@ and of_uid t blob ~uid =
 
 and of_offset t blob ~cursor =
   let (kind, _size), cursor' = header_of_entry t ~cursor in
+  Log.debug (fun m -> m "decode a new entry (%d)" kind);
   match kind with
   | 0b000 | 0b101 -> raise Bad_type
   | 0b001 -> uncompress t `A blob ~cursor:cursor'

@@ -189,7 +189,7 @@ let test01 =
     let len = Int.min len (String.length str - pos) in
     Format.eprintf "map ~pos:%d %d\n%!" pos len;
     let str = String.sub str pos len in
-    Carton.bigstring_of_string str
+    Bstr.of_string str
   in
   let idx = Cachet.make ~map str in
   let idx =
@@ -203,7 +203,7 @@ let test01 =
     let map str ~pos len =
       let len = Int.min len (String.length str - pos) in
       let str = String.sub str pos len in
-      Carton.bigstring_of_string str
+      Bstr.of_string str
     in
     Cachet.make ~map payload
   in

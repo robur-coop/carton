@@ -32,15 +32,12 @@ val get_crc : 'fd t -> int -> Optint.t
 val pack : 'fd t -> string
 val idx : 'fd t -> string
 
-type bigstring =
-  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
 module type UID = sig
   type t
   type ctx
 
   val empty : ctx
-  val feed : ctx -> ?off:int -> ?len:int -> bigstring -> ctx
+  val feed : ctx -> ?off:int -> ?len:int -> Bstr.t -> ctx
   val get : ctx -> t
   val compare : t -> t -> int
   val length : int
@@ -51,7 +48,7 @@ end
 module Encoder : sig
   type 'ctx hash = 'ctx Carton.First_pass.hash = {
       feed_bytes: bytes -> off:int -> len:int -> 'ctx -> 'ctx
-    ; feed_bigstring: De.bigstring -> 'ctx -> 'ctx
+    ; feed_bigstring: Bstr.t -> 'ctx -> 'ctx
     ; serialize: 'ctx -> string
     ; length: int
   }

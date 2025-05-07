@@ -3,31 +3,6 @@ open Lwt
 let failwithf fmt = Format.kasprintf failwith fmt
 let src = Logs.Src.create "carton-lwt"
 
-external bigstring_set_uint8 : De.bigstring -> int -> int -> unit
-  = "%caml_ba_set_1"
-
-external bigstring_set_int32_ne : De.bigstring -> int -> int32 -> unit
-  = "%caml_bigstring_set32"
-
-let bigstring_blit_from_bytes src ~src_off dst ~dst_off ~len =
-  let len0 = len land 3 in
-  let len1 = len lsr 2 in
-  for i = 0 to len1 - 1 do
-    let i = i * 4 in
-    let v = Bytes.get_int32_ne src (src_off + i) in
-    bigstring_set_int32_ne dst (dst_off + i) v
-  done;
-  for i = 0 to len0 - 1 do
-    let i = (len1 * 4) + i in
-    let v = Bytes.get_uint8 src (src_off + i) in
-    bigstring_set_uint8 dst (dst_off + i) v
-  done
-
-let bigstring_blit_from_string src ~src_off dst ~dst_off ~len =
-  bigstring_blit_from_bytes
-    (Bytes.unsafe_of_string src)
-    ~src_off dst ~dst_off ~len
-
 module Log = (val Logs.src_log src : Logs.LOG)
 
 let ignore3 _ _ = Lwt.return_unit
@@ -88,12 +63,10 @@ let uncompress t kind blob ~cursor =
     | `Await decoder -> begin
         Cachet_lwt.next (Carton.cache t) slice >>= function
         | Some ({ payload; length; _ } as slice) ->
-            let decoder =
-              Zl.Inf.src decoder (payload :> De.bigstring) 0 length
-            in
+            let decoder = Zl.Inf.src decoder (payload :> Bstr.t) 0 length in
             (go [@tailcall]) ~real_length ~flushed slice decoder
         | None ->
-            let decoder = Zl.Inf.src decoder De.bigstring_empty 0 0 in
+            let decoder = Zl.Inf.src decoder Bstr.empty 0 0 in
             (go [@tailcall]) ~real_length ~flushed slice decoder
       end
   in
@@ -104,7 +77,7 @@ let uncompress t kind blob ~cursor =
       let len = length - off in
       let allocate = Carton.allocate t in
       let decoder = Zl.Inf.decoder `Manual ~o ~allocate in
-      let decoder = Zl.Inf.src decoder (payload :> De.bigstring) off len in
+      let decoder = Zl.Inf.src decoder (payload :> Bstr.t) off len in
       go ~real_length:0 ~flushed:false slice decoder
   | None -> assert false
 
@@ -130,11 +103,11 @@ let of_delta t kind blob ~depth ~cursor =
     | `Await decoder -> begin
         Cachet_lwt.next (Carton.cache t) slice >>= function
         | None ->
-            let decoder = Carton.Zh.M.src decoder De.bigstring_empty 0 0 in
+            let decoder = Carton.Zh.M.src decoder Bstr.empty 0 0 in
             (go [@tailcall]) slice blob decoder
         | Some ({ payload; length; _ } as slice) ->
             let decoder =
-              Carton.Zh.M.src decoder (payload :> De.bigstring) 0 length
+              Carton.Zh.M.src decoder (payload :> Bstr.t) 0 length
             in
             (go [@tailcall]) slice blob decoder
       end
@@ -143,7 +116,7 @@ let of_delta t kind blob ~depth ~cursor =
   | Some ({ offset; payload; length } as slice) ->
       let off = cursor - offset in
       let len = length - off in
-      let decoder = Zh.M.src decoder (payload :> De.bigstring) off len in
+      let decoder = Zh.M.src decoder (payload :> Bstr.t) off len in
       go slice blob decoder
   | None -> assert false
 
@@ -175,12 +148,6 @@ let of_offset_with_source t value ~cursor =
   and depth = Carton.Value.depth value in
   of_offset_with_source t kind blob ~depth ~cursor
 
-let bigstring_copy bstr =
-  let len = Bigarray.Array1.dim bstr in
-  let bstr' = Bigarray.Array1.create Bigarray.char Bigarray.c_layout len in
-  Cachet.memcpy bstr ~src_off:0 bstr' ~dst_off:0 ~len;
-  bstr'
-
 type base = { value: Carton.Value.t; uid: Carton.Uid.t; depth: int }
 
 let identify (Carton.Identify gen) ~kind ~len bstr =
@@ -209,7 +176,7 @@ let rec resolve_tree ?(on = ignore3) t oracle matrix ~(base : base) = function
       resolve_tree ~on t oracle matrix ~base children
   | cursors ->
       let source = Carton.Value.source base.value in
-      let source = bigstring_copy source in
+      let source = Bstr.copy source in
       let rec go idx =
         if idx < Array.length cursors then begin
           let cursor = cursors.(idx) in
@@ -333,7 +300,8 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
       end
   in
   let number_of_objects = ref 0 in
-  let pos = ref 0 in
+  let (Carton.Identify i) = identify in
+  let ctx = ref None in
   let fn = function
     | `Number n ->
         number_of_objects := n;
@@ -341,6 +309,21 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
     | `Hash value ->
         hash := value;
         Lwt.return_unit
+    | `Inflate (None, _) -> Lwt.return_unit
+    | `Inflate (Some (k, size), str) -> begin
+        let open Carton in
+        let open First_pass in
+        match !ctx with
+        | None ->
+            let ctx0 = i.init k (Carton.Size.of_int_exn size) in
+            let ctx0 = i.feed (Bstr.of_string str) ctx0 in
+            ctx := Some ctx0;
+            Lwt.return_unit
+        | Some ctx0 ->
+            let ctx0 = i.feed (Bstr.of_string str) ctx0 in
+            ctx := Some ctx0;
+            Lwt.return_unit
+      end
     | `Entry entry -> begin
         let offset = entry.Carton.First_pass.offset in
         let size = entry.Carton.First_pass.size in
@@ -348,21 +331,23 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         let crc = entry.Carton.First_pass.crc in
         on ~max:!number_of_objects { offset; crc; consumed; size:> int }
         >|= fun () ->
-        Hashtbl.add where offset !pos;
+        Hashtbl.add where offset entry.number;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
-        | Carton.First_pass.Base (_, uid, _) ->
+        | Carton.First_pass.Base _ ->
             Hashtbl.add sizes offset (ref size);
-            Hashtbl.add is_base !pos offset;
-            Hashtbl.add index uid offset;
-            incr pos
+            Hashtbl.add is_base entry.number offset;
+            let uid = Option.get (Option.map i.serialize !ctx) in
+            ctx := None;
+            Log.debug (fun m ->
+                m "new OBJ_BASE at %08x:%s" offset (Ohex.encode (uid :> string)));
+            Hashtbl.add index uid offset
         | Ofs { sub; source; target; _ } ->
             Log.debug (fun m ->
                 m "new OBJ_OFS object at %08x (rel: %08x)" offset sub);
             let parent = offset - sub in
             update_size ~parent offset (Carton.Size.max source target);
-            new_child ~parent:(`Ofs parent) offset;
-            incr pos
+            new_child ~parent:(`Ofs parent) offset
         | Ref { ptr; source; target; _ } ->
             begin
               match Hashtbl.find_opt index ptr with
@@ -372,8 +357,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
                   Hashtbl.add sizes offset (ref (Carton.Size.max source target))
             end;
             Hashtbl.add ref_index offset ptr;
-            new_child ~parent:(`Ref ptr) offset;
-            incr pos
+            new_child ~parent:(`Ref ptr) offset
       end
   in
   Lwt_seq.iter_p fn seq >|= fun () ->
@@ -388,7 +372,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
       | None -> ())
     ref_index;
   Log.debug (fun m -> m "%d object(s)" !number_of_objects);
-  let children ~cursor ~uid =
+  let children ~cursor ~(uid : Carton.Uid.t) =
     match
       ( Hashtbl.find_opt children_by_offset cursor
       , Hashtbl.find_opt children_by_uid uid )
@@ -415,18 +399,21 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   }
 
 type ctx = {
-    output: De.bigstring
+    output: Bstr.t
   ; allocate: int -> De.window
   ; ref_length: int
   ; digest: Carton.First_pass.digest
-  ; identify: Carton.identify
 }
 
 let of_stream_to_store ctx ~append stream =
-  let input = De.bigstring_create 0x7ff in
+  let input = Bstr.create 0x7ff in
   let first = ref true in
   let rec go decoder (str, src_off, src_len) () =
     match Carton.First_pass.decode decoder with
+    | `Inflate (payload, decoder) ->
+        let next = go decoder (str, src_off, src_len) in
+        let kind = Carton.First_pass.kind decoder in
+        Lwt.return (Lwt_seq.Cons (`Inflate (kind, payload), next))
     | `Await decoder ->
         if src_len == 0 then
           Lwt_stream.get stream >>= function
@@ -434,18 +421,16 @@ let of_stream_to_store ctx ~append stream =
               let len =
                 Int.min (Bigarray.Array1.dim input) (String.length str)
               in
-              bigstring_blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+              Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
               append str ~off:0 ~len >>= fun () ->
               let decoder = Carton.First_pass.src decoder input 0 len in
               go decoder (str, len, String.length str - len) ()
           | None ->
-              let decoder =
-                Carton.First_pass.src decoder De.bigstring_empty 0 0
-              in
+              let decoder = Carton.First_pass.src decoder Bstr.empty 0 0 in
               go decoder (String.empty, 0, 0) ()
         else begin
           let len = Int.min (Bigarray.Array1.dim input) src_len in
-          bigstring_blit_from_string str ~src_off input ~dst_off:0 ~len;
+          Bstr.blit_from_string str ~src_off input ~dst_off:0 ~len;
           append str ~off:src_off ~len >>= fun () ->
           let decoder = Carton.First_pass.src decoder input 0 len in
           go decoder (str, src_off + len, src_len - len) ()
@@ -460,20 +445,18 @@ let of_stream_to_store ctx ~append stream =
                   (Bigarray.Array1.dim input - dst_off)
                   (String.length str)
               in
-              bigstring_blit_from_string str ~src_off:0 input ~dst_off ~len;
+              Bstr.blit_from_string str ~src_off:0 input ~dst_off ~len;
               append str ~off:0 ~len >>= fun () ->
               let decoder =
                 Carton.First_pass.src decoder input 0 (dst_off + len)
               in
               go decoder (str, len, String.length str - len) ()
           | None ->
-              let decoder =
-                Carton.First_pass.src decoder De.bigstring_empty 0 0
-              in
+              let decoder = Carton.First_pass.src decoder Bstr.empty 0 0 in
               go decoder (String.empty, 0, 0) ()
         else begin
           let len = Int.min (Bigarray.Array1.dim input - dst_off) src_len in
-          bigstring_blit_from_string str ~src_off input ~dst_off ~len;
+          Bstr.blit_from_string str ~src_off input ~dst_off ~len;
           append str ~off:src_off ~len >>= fun () ->
           let decoder = Carton.First_pass.src decoder input 0 (dst_off + len) in
           go decoder (str, src_off + len, src_len - len) ()
@@ -495,34 +478,25 @@ let of_stream_to_store ctx ~append stream =
     | `End hash -> Lwt.return (Lwt_seq.Cons (`Hash hash, Lwt_seq.empty))
   in
   let decoder =
-    let {
-      output
-    ; allocate
-    ; ref_length
-    ; digest
-    ; identify= Carton.Identify identify
-    } =
-      ctx
-    in
-    Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest ~identify
-      `Manual
+    let { output; allocate; ref_length; digest; _ } = ctx in
+    Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest `Manual
   in
   go decoder (String.empty, 0, 0)
 
 let never uid = failwithf "Impossible to find the object %a" Carton.Uid.pp uid
 
 let make ?z ~ref_length ?(index = never) cache =
-  let z = match z with None -> De.bigstring_create 0x7ff | Some z -> z in
+  let z = match z with None -> Bstr.create 0x7ff | Some z -> z in
   let allocate bits = De.make_window ~bits in
   Carton.of_cache cache ~z ~allocate ~ref_length index
 
 let verify_from_stream
     ~cfg:{ threads; ref_length; identify; on_entry; on_object } ~digest ~append
     cache stream =
-  let z = De.bigstring_create De.io_buffer_size in
+  let z = Bstr.create De.io_buffer_size in
   let seq =
     let allocate bits = De.make_window ~bits in
-    let ctx = { output= z; allocate; ref_length; digest; identify } in
+    let ctx = { output= z; allocate; ref_length; digest } in
     of_stream_to_store ctx ~append stream
   in
   let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in
