@@ -5,8 +5,6 @@
  (wrapped false)
  (libraries
   bstr
-  hxd.core
-  hxd.string
   ohex
   cachet
   duff
