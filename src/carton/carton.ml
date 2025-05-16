@@ -712,12 +712,9 @@ module Blob = struct
   type t = { raw0: Bstr.t; raw1: Bstr.t; flip: bool }
 
   let make ~size =
-    let raw = Bstr.create (size * 2) in
-    {
-      raw0= Bstr.sub raw ~off:0 ~len:size
-    ; raw1= Bstr.sub raw ~off:size ~len:size
-    ; flip= false
-    }
+    let raw0 = Bstr.create size in
+    let raw1 = Bstr.create size in
+    { raw0; raw1; flip= false }
 
   let size { raw0; _ } = Bigarray.Array1.dim raw0
   let source { raw0; raw1; flip } = if flip then raw1 else raw0
