@@ -30,7 +30,10 @@ module Make (Hash : Digestif.S) : sig
   val index : length:int -> 'fd Cachet.t -> 'fd Classeur.t
 
   val make :
-    ?z:Bstr.t -> ?index:(Carton.Uid.t -> int) -> 'fd Cachet.t -> 'fd Carton.t
+       ?z:Bstr.t
+    -> ?index:(Carton.Uid.t -> Carton.location)
+    -> 'fd Cachet.t
+    -> 'fd Carton.t
 
   val entries_to_index : pack:string -> Carton.status array -> string Lwt_seq.t
 end

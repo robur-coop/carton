@@ -15,7 +15,7 @@ val make :
   -> ?cachesize:int
   -> ?z:De.bigstring
   -> ref_length:int
-  -> ?index:(Carton.Uid.t -> int)
+  -> ?index:(Carton.Uid.t -> Carton.location)
   -> Fpath.t
   -> file_descr Carton.t
 

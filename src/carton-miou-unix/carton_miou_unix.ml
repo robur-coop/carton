@@ -426,12 +426,12 @@ let entries_of_pack ~cfg ~digest filename =
     | Carton.Unresolved_base _ -> assert false
     | Unresolved_node _ -> assert false
     | Resolved_base { cursor; uid; kind; _ } ->
-        Hashtbl.add idx uid cursor;
+        Hashtbl.add idx uid (Carton.Local cursor);
         let length = Hashtbl.find size uid in
         let meta = (t, None) in
         Cartonnage.Entry.make ~kind uid ~length:(length :> int) meta
     | Resolved_node { cursor; uid; kind; depth; parent; _ } ->
-        Hashtbl.add idx uid cursor;
+        Hashtbl.add idx uid (Carton.Local cursor);
         let raw = Hashtbl.find raw cursor in
         let delta = { source= parent; depth; raw } in
         let meta = (t, Some delta) in
@@ -618,7 +618,7 @@ let verify_from_idx
     let z = Bstr.create De.io_buffer_size in
     let index (uid : Carton.Uid.t) =
       let uid = Classeur.uid_of_string_exn idx (uid :> string) in
-      Classeur.find_offset idx uid
+      Carton.Local (Classeur.find_offset idx uid)
     in
     make ?pagesize ?cachesize ~z ~ref_length ~index
       (Fpath.set_ext ".pack" filename)

@@ -767,9 +767,11 @@ module Value = struct
       t.kind t.len t.depth
 end
 
+type location = Local of int | Extern of Kind.t * Bstr.t
+
 type 'fd t = {
     cache: 'fd Cachet.t
-  ; where: string -> int
+  ; where: string -> location
   ; ref_length: int
   ; tmp: Bstr.t
   ; allocate: int -> Zl.window
@@ -894,8 +896,9 @@ and size_of_ofs_delta t ?visited ~anchor ~cursor size =
   (size_of_offset [@tailcall]) t ?visited ~cursor:(anchor - rel_offset) size
 
 and size_of_uid t ?visited ~uid size =
-  let cursor = t.where uid in
-  (size_of_offset [@tailcall]) t ?visited ~cursor size
+  match t.where uid with
+  | Local cursor -> (size_of_offset [@tailcall]) t ?visited ~cursor size
+  | Extern (_kind, bstr) -> Int.max size (Bstr.length bstr)
 
 and size_of_offset t ?(visited = Visited.empty) ~cursor size =
   if Visited.already_visited visited ~cursor then raise Cycle;
@@ -1024,8 +1027,13 @@ and of_ref_delta t blob ~cursor =
     ~cursor:(cursor + t.ref_length)
 
 and of_uid t blob ~uid =
-  let cursor = t.where uid in
-  of_offset t blob ~cursor
+  match t.where uid with
+  | Local cursor -> of_offset t blob ~cursor
+  | Extern (kind, src) ->
+      let len = Bstr.length src in
+      let dst = Blob.payload blob in
+      Bstr.blit src ~src_off:0 dst ~dst_off:0 ~len;
+      { Value.kind; blob; len; depth= 1 }
 
 and of_offset t blob ~cursor =
   let (kind, _size), cursor' = header_of_entry t ~cursor in
@@ -1076,10 +1084,13 @@ and fill_path_from_ref_delta t visited ~cursor size =
   (fill_path_from_uid [@tailcall]) t visited ~uid size
 
 and fill_path_from_uid t visited ~uid size =
-  let cursor = t.where uid in
-  (fill_path_from_offset [@tailcall]) t visited ~cursor size
+  match t.where uid with
+  | Local cursor -> (fill_path_from_offset [@tailcall]) t visited ~cursor size
+  | Extern (kind, bstr) ->
+      let visited = { visited with depth= succ visited.depth } in
+      { kind; size= Size.max (Bstr.length bstr) size; depth= visited.depth }
 
-and fill_path_from_offset t visited ~cursor size =
+and fill_path_from_offset t (visited : Visited.t) ~cursor size =
   if Visited.already_visited visited ~cursor then raise Cycle;
   visited.path.(visited.depth) <- cursor;
   let visited = { visited with depth= succ visited.depth } in
@@ -1110,8 +1121,9 @@ let path_of_offset ?(max_depth = _max_depth) t ~cursor =
   { Path.depth; path= visited.path; kind; size }
 
 let path_of_uid t uid =
-  let cursor = t.where uid in
-  path_of_offset t ~cursor
+  match t.where uid with
+  | Local cursor -> path_of_offset t ~cursor
+  | Extern _ -> Fmt.failwith "%a is a not a part of the PACK file" Uid.pp uid
 
 let of_offset_with_source t kind blob ~depth ~cursor =
   let (kind', _size), cursor' = header_of_entry t ~cursor in

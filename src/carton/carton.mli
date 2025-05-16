@@ -361,6 +361,8 @@ end
 type 'fd t
 (** Type representing a PACK file and used to extract objects. *)
 
+type location = Local of int | Extern of Kind.t * Bstr.t
+
 val make :
      ?pagesize:int
   -> ?cachesize:int
@@ -369,7 +371,7 @@ val make :
   -> z:Bstr.t
   -> allocate:(int -> Zl.window)
   -> ref_length:int
-  -> (Uid.t -> int)
+  -> (Uid.t -> location)
   -> 'fd t
 (** [make ~map fd ~z ~allocate ~ref_length where] creates a representation of
     the PACK file whose read access is managed by the [map] function. A few
@@ -397,7 +399,7 @@ val of_cache :
   -> z:Bstr.t
   -> allocate:(int -> Zl.window)
   -> ref_length:int
-  -> (Uid.t -> int)
+  -> (Uid.t -> location)
   -> 'fd t
 (** [of_cache cache ~z ~allocate ~ref_length where] is equivalent to {!val:make}
     but uses the [cache] already available and initialised by the user. *)
@@ -419,7 +421,7 @@ val allocate : 'fd t -> int -> Zl.window
 val tmp : 'fd t -> Bstr.t
 val ref_length : 'fd t -> int
 val map : 'fd t -> cursor:int -> consumed:int -> Cachet.Bstr.t
-val with_index : 'fd t -> (Uid.t -> int) -> 'fd t
+val with_index : 'fd t -> (Uid.t -> location) -> 'fd t
 
 (* {2 Reconstruct a patch.}
 
