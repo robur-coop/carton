@@ -27,7 +27,7 @@ let entries_of_pack cfg digest pack =
         Carton_miou_unix.verify_from_idx ~cfg ~digest filename
   in
   let fn _idx = function
-    | Carton.Unresolved_base _ | Carton.Unresolved_node ->
+    | Carton.Unresolved_base _ | Carton.Unresolved_node _ ->
         Logs.err (fun m -> m "object %d unresolved" _idx);
         assert false
     | Resolved_base { cursor; uid; crc; _ } ->

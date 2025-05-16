@@ -26,7 +26,7 @@ let pp_kind ppf = function
 
 let pp_status consumed ~max_consumed ~max_offset ppf = function
   | Carton.Unresolved_base { cursor } -> Fmt.pf ppf "%08x" cursor
-  | Unresolved_node -> ()
+  | Unresolved_node _ -> ()
   | Resolved_base { cursor; uid; kind; crc } ->
       Fmt.pf ppf "%a %a %*d %*d %08lx" Carton.Uid.pp uid pp_kind kind max_offset
         cursor max_consumed
@@ -41,7 +41,7 @@ let pp_status consumed ~max_consumed ~max_offset ppf = function
 
 let pp_status_without_consumed ~max_offset ppf = function
   | Carton.Unresolved_base { cursor } -> Fmt.pf ppf "%08x" cursor
-  | Unresolved_node -> ()
+  | Unresolved_node _ -> ()
   | Resolved_base { cursor; uid; kind; crc } ->
       Fmt.pf ppf "%a %a %*d %08lx" Carton.Uid.pp uid pp_kind kind max_offset
         cursor
@@ -149,7 +149,7 @@ let run quiet progress without_progress threads pagesize digest without_consumed
     Array.fold_left
       (fun a -> function
         | Carton.Unresolved_base { cursor } -> Int.max cursor a
-        | Unresolved_node -> a
+        | Unresolved_node _ -> a
         | Resolved_base { cursor; _ } -> Int.max cursor a
         | Resolved_node { cursor; _ } -> Int.max cursor a)
       0 matrix

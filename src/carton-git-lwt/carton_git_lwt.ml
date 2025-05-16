@@ -50,4 +50,36 @@ module Make (Hash : Digestif.S) = struct
 
   let make ?z ?index cache =
     Carton_lwt.make ?z ~ref_length:Hash.digest_size ?index cache
+
+  let entries_to_index ~pack entries =
+    let fn = function
+      | Carton.Unresolved_base _ | Carton.Unresolved_node _ ->
+          failwith "Unresolved entry"
+      | Resolved_base { cursor; uid; crc; _ } ->
+          let uid = Classeur.unsafe_uid_of_string (uid :> string) in
+          Classeur.Encoder.{ uid; crc; offset= Int64.of_int cursor }
+      | Resolved_node { cursor; uid; crc; _ } ->
+          let uid = Classeur.unsafe_uid_of_string (uid :> string) in
+          Classeur.Encoder.{ uid; crc; offset= Int64.of_int cursor }
+    in
+    let entries = Array.map fn entries in
+    let encoder =
+      Classeur.Encoder.encoder `Manual ~digest ~pack
+        ~ref_length:Hash.digest_size entries
+    in
+    let buf = Bytes.create 0x7ff in
+    Classeur.Encoder.dst encoder buf 0 (Bytes.length buf);
+    let rec go (`Await as await) =
+      match Classeur.Encoder.encode encoder await with
+      | `Ok ->
+          let len = Bytes.length buf - Classeur.Encoder.dst_rem encoder in
+          let str = Bytes.sub_string buf 0 len in
+          Seq.Cons (str, Fun.const Seq.Nil)
+      | `Partial ->
+          let len = Bytes.length buf - Classeur.Encoder.dst_rem encoder in
+          let str = Bytes.sub_string buf 0 len in
+          let next () = go await in
+          Seq.Cons (str, next)
+    in
+    Lwt_seq.of_seq (fun () -> go `Await)
 end

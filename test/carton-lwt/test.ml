@@ -94,13 +94,15 @@ open Lwt
 let status =
   let pp_status ppf = function
     | Carton.Unresolved_base { cursor } -> Fmt.pf ppf "%08x" cursor
-    | Unresolved_node -> Fmt.string ppf "unresolved"
+    | Unresolved_node _ -> Fmt.string ppf "unresolved"
     | Resolved_base { uid; _ } -> Carton.Uid.pp ppf uid
     | Resolved_node { uid; _ } -> Carton.Uid.pp ppf uid
   in
   let equal_status a b =
     match (a, b) with
-    | Carton.Unresolved_node, Carton.Unresolved_node -> true
+    | Carton.Unresolved_node { cursor= a }, Carton.Unresolved_node { cursor= b }
+      ->
+        a = b
     | Unresolved_base { cursor= a }, Unresolved_base { cursor= b } -> a = b
     | Resolved_base { uid= a; _ }, Resolved_base { uid= b; _ } ->
         Carton.Uid.equal a b
@@ -148,7 +150,7 @@ let entries_of_pack filename =
   Carton_lwt.verify_from_stream ~cfg ~digest ~append cache stream
   >>= fun (matrix, hash) ->
   let fn _idx = function
-    | Carton.Unresolved_base _ | Carton.Unresolved_node -> assert false
+    | Carton.Unresolved_base _ | Carton.Unresolved_node _ -> assert false
     | Resolved_base { cursor; uid; crc; _ } ->
         let uid = Classeur.unsafe_uid_of_string (uid :> string) in
         Classeur.Encoder.{ uid; crc; offset= Int64.of_int cursor }
@@ -236,7 +238,7 @@ let test02 =
             Logs.debug (fun m -> m "Missing object at %08x" cursor);
             incr count;
             false
-        | Unresolved_node ->
+        | Unresolved_node _ ->
             Logs.debug (fun m -> m "Missing object %d" !count);
             incr count;
             false

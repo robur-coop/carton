@@ -220,6 +220,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   let is_base = Hashtbl.create 0x7ff in
   let index = Hashtbl.create 0x7ff in
   let ref_index = Hashtbl.create 0x7ff in
+  let cursors = Hashtbl.create 0x7ff in
   let hash = ref (String.make digest_length '\000') in
   let update_size ~parent offset (size : Carton.Size.t) =
     Log.debug (fun m ->
@@ -270,6 +271,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         let consumed = entry.Carton.First_pass.consumed in
         on ~max:!number_of_objects { offset; crc; consumed; size:> int };
         Hashtbl.add where offset entry.number;
+        Hashtbl.add cursors entry.number offset;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
         | Carton.First_pass.Base _ ->
@@ -333,10 +335,12 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   let size ~cursor = !(Hashtbl.find sizes cursor) in
   let checksum ~cursor = Hashtbl.find crcs cursor in
   let is_base ~pos = Hashtbl.find_opt is_base pos in
+  let cursor ~pos = Hashtbl.find cursors pos in
   {
     Carton.identify
   ; children
   ; where
+  ; cursor
   ; size
   ; checksum
   ; is_base
@@ -372,7 +376,7 @@ let verify_from_pack
     Array.init oracle.Carton.number_of_objects @@ fun pos ->
     match oracle.is_base ~pos with
     | Some cursor -> Carton.Unresolved_base { cursor }
-    | None -> Unresolved_node
+    | None -> Unresolved_node { cursor= oracle.Carton.cursor ~pos }
   in
   verify ?threads ~on:on_object t oracle matrix;
   (matrix, oracle.hash)
@@ -409,7 +413,7 @@ let entries_of_pack ~cfg ~digest filename =
     Array.init oracle.Carton.number_of_objects @@ fun pos ->
     match oracle.is_base ~pos with
     | Some cursor -> Carton.Unresolved_base { cursor }
-    | None -> Unresolved_node
+    | None -> Unresolved_node { cursor= oracle.Carton.cursor ~pos }
   in
   let size = Hashtbl.create 0x7ff in
   let on ~cursor:_ value uid =
@@ -420,7 +424,7 @@ let entries_of_pack ~cfg ~digest filename =
   let t = Carton.with_index t (Hashtbl.find idx) in
   let fn = function
     | Carton.Unresolved_base _ -> assert false
-    | Unresolved_node -> assert false
+    | Unresolved_node _ -> assert false
     | Resolved_base { cursor; uid; kind; _ } ->
         Hashtbl.add idx uid cursor;
         let length = Hashtbl.find size uid in
@@ -499,6 +503,7 @@ let compile ?(on = ignorem) ~identify pack idx =
   let sizes : (int, Carton.Size.t ref) Hashtbl.t = Hashtbl.create 0x7ff in
   let crcs = Hashtbl.create 0x7ff in
   let is_base = Hashtbl.create 0x7ff in
+  let cursors = Hashtbl.create 0x7ff in
   let number_of_objects = Classeur.max idx in
   let positions = Heap.create number_of_objects in
   let update_size ~chain (size : Carton.Size.t) =
@@ -569,10 +574,13 @@ let compile ?(on = ignorem) ~identify pack idx =
   let is_base ~pos =
     if Hashtbl.mem is_base positions.(pos) then Some positions.(pos) else None
   in
+  Array.iteri (fun pos cursor -> Hashtbl.add cursors pos cursor) positions;
+  let cursor ~pos = Hashtbl.find cursors pos in
   {
     Carton.identify
   ; children
   ; where
+  ; cursor
   ; size
   ; checksum
   ; is_base
@@ -624,7 +632,7 @@ let verify_from_idx
     Array.init oracle.Carton.number_of_objects @@ fun pos ->
     match oracle.is_base ~pos with
     | Some cursor -> Carton.Unresolved_base { cursor }
-    | None -> Unresolved_node
+    | None -> Unresolved_node { cursor= oracle.Carton.cursor ~pos }
   in
   verify ?threads ~on:on_object pack oracle matrix;
   (matrix, oracle.hash)

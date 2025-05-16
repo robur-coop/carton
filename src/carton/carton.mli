@@ -599,6 +599,7 @@ type oracle = {
     identify: identify
   ; children: children
   ; where: where
+  ; cursor: pos:int -> int
   ; size: cursor:int -> Size.t
   ; checksum: cursor:int -> Optint.t
   ; is_base: pos:int -> int option
@@ -608,7 +609,7 @@ type oracle = {
 
 type status =
   | Unresolved_base of { cursor: int }
-  | Unresolved_node
+  | Unresolved_node of { cursor: int }
   | Resolved_base of { cursor: int; uid: Uid.t; crc: Optint.t; kind: Kind.t }
   | Resolved_node of {
         cursor: int
