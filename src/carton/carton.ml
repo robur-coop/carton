@@ -1075,7 +1075,7 @@ let kind_of_int = function
 
 type result = { kind: Kind.t; size: Size.t; depth: int }
 
-let rec fill_path_from_ofs_delta t visited ~anchor ~cursor size =
+let rec fill_path_from_ofs_delta t (visited : Visited.t) ~anchor ~cursor size =
   let rel_offset, cursor' = header_of_ofs_delta t ~cursor in
   let size = size_of_delta t ~cursor:cursor' size in
   Log.debug (fun m ->
@@ -1095,7 +1095,7 @@ and fill_path_from_uid t visited ~uid size =
       let visited = { visited with depth= succ visited.depth } in
       { kind; size= Size.max (Bstr.length bstr) size; depth= visited.depth }
 
-and fill_path_from_offset t (visited : Visited.t) ~cursor size =
+and fill_path_from_offset t visited ~cursor size =
   if Visited.already_visited visited ~cursor then raise Cycle;
   visited.path.(visited.depth) <- cursor;
   let visited = { visited with depth= succ visited.depth } in
