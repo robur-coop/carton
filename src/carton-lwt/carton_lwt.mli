@@ -42,6 +42,6 @@ val index :
 val make :
      ?z:Bstr.t
   -> ref_length:int
-  -> ?index:(Carton.Uid.t -> int)
+  -> ?index:(Carton.Uid.t -> Carton.location)
   -> 'fd Cachet.t
   -> 'fd Carton.t

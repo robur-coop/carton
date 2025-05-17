@@ -237,7 +237,7 @@ module First_pass = struct
       }
     in
     let rem = src_rem decoder in
-    if rem < 0 then malformedf "Unexpected end of input"
+    if rem < 0 then malformedf "First_pass.fill: Unexpected end of input"
     else
       let need = decoder.tmp_need - decoder.tmp_len in
       (* XXX(dinosaure): in the [`Manual] case, [input_pos = 1] and [blit] will
@@ -703,7 +703,15 @@ module First_pass = struct
       | `End hash -> Seq.Cons (`Hash hash, Fun.const Seq.Nil)
     in
     let decoder = decoder ~output ~allocate ~ref_length ~digest `Manual in
-    go decoder seq (String.empty, 0, 0)
+    fun () -> match Seq.uncons seq with
+    | Some (str, seq) ->
+        let len = Int.min (bstr_length input) (String.length str) in
+        Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+        let decoder = src decoder input 0 len in
+        go decoder seq (str, len, String.length str - len) ()
+    | None ->
+        Log.debug (fun m -> m "No PACK file are given");
+        Seq.Nil
 end
 
 let _max_depth = 60
@@ -712,12 +720,9 @@ module Blob = struct
   type t = { raw0: Bstr.t; raw1: Bstr.t; flip: bool }
 
   let make ~size =
-    let raw = Bstr.create (size * 2) in
-    {
-      raw0= Bstr.sub raw ~off:0 ~len:size
-    ; raw1= Bstr.sub raw ~off:size ~len:size
-    ; flip= false
-    }
+    let raw0 = Bstr.create size in
+    let raw1 = Bstr.create size in
+    { raw0; raw1; flip= false }
 
   let size { raw0; _ } = Bigarray.Array1.dim raw0
   let source { raw0; raw1; flip } = if flip then raw1 else raw0
@@ -767,9 +772,11 @@ module Value = struct
       t.kind t.len t.depth
 end
 
+type location = Local of int | Extern of Kind.t * Bstr.t
+
 type 'fd t = {
     cache: 'fd Cachet.t
-  ; where: string -> int
+  ; where: string -> location
   ; ref_length: int
   ; tmp: Bstr.t
   ; allocate: int -> Zl.window
@@ -894,8 +901,9 @@ and size_of_ofs_delta t ?visited ~anchor ~cursor size =
   (size_of_offset [@tailcall]) t ?visited ~cursor:(anchor - rel_offset) size
 
 and size_of_uid t ?visited ~uid size =
-  let cursor = t.where uid in
-  (size_of_offset [@tailcall]) t ?visited ~cursor size
+  match t.where uid with
+  | Local cursor -> (size_of_offset [@tailcall]) t ?visited ~cursor size
+  | Extern (_kind, bstr) -> Int.max size (Bstr.length bstr)
 
 and size_of_offset t ?(visited = Visited.empty) ~cursor size =
   if Visited.already_visited visited ~cursor then raise Cycle;
@@ -1024,8 +1032,13 @@ and of_ref_delta t blob ~cursor =
     ~cursor:(cursor + t.ref_length)
 
 and of_uid t blob ~uid =
-  let cursor = t.where uid in
-  of_offset t blob ~cursor
+  match t.where uid with
+  | Local cursor -> of_offset t blob ~cursor
+  | Extern (kind, src) ->
+      let len = Bstr.length src in
+      let dst = Blob.payload blob in
+      Bstr.blit src ~src_off:0 dst ~dst_off:0 ~len;
+      { Value.kind; blob; len; depth= 1 }
 
 and of_offset t blob ~cursor =
   let (kind, _size), cursor' = header_of_entry t ~cursor in
@@ -1076,10 +1089,13 @@ and fill_path_from_ref_delta t visited ~cursor size =
   (fill_path_from_uid [@tailcall]) t visited ~uid size
 
 and fill_path_from_uid t visited ~uid size =
-  let cursor = t.where uid in
-  (fill_path_from_offset [@tailcall]) t visited ~cursor size
+  match t.where uid with
+  | Local cursor -> (fill_path_from_offset [@tailcall]) t visited ~cursor size
+  | Extern (kind, bstr) ->
+      let visited = { visited with depth= succ visited.depth } in
+      { kind; size= Size.max (Bstr.length bstr) size; depth= visited.depth }
 
-and fill_path_from_offset t visited ~cursor size =
+and fill_path_from_offset t (visited : Visited.t) ~cursor size =
   if Visited.already_visited visited ~cursor then raise Cycle;
   visited.path.(visited.depth) <- cursor;
   let visited = { visited with depth= succ visited.depth } in
@@ -1110,8 +1126,9 @@ let path_of_offset ?(max_depth = _max_depth) t ~cursor =
   { Path.depth; path= visited.path; kind; size }
 
 let path_of_uid t uid =
-  let cursor = t.where uid in
-  path_of_offset t ~cursor
+  match t.where uid with
+  | Local cursor -> path_of_offset t ~cursor
+  | Extern _ -> Fmt.failwith "%a is a not a part of the PACK file" Uid.pp uid
 
 let of_offset_with_source t kind blob ~depth ~cursor =
   let (kind', _size), cursor' = header_of_entry t ~cursor in
@@ -1225,6 +1242,7 @@ type oracle = {
     identify: identify
   ; children: children
   ; where: where
+  ; cursor: pos:int -> int
   ; size: cursor:int -> int
   ; checksum: cursor:int -> Optint.t
   ; is_base: pos:int -> int option
@@ -1234,7 +1252,7 @@ type oracle = {
 
 type status =
   | Unresolved_base of { cursor: int }
-  | Unresolved_node
+  | Unresolved_node of { cursor: int }
   | Resolved_base of { cursor: int; uid: Uid.t; crc: Optint.t; kind: Kind.t }
   | Resolved_node of {
         cursor: int

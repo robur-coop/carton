@@ -276,6 +276,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   let is_base = Hashtbl.create 0x7ff in
   let index = Hashtbl.create 0x7ff in
   let ref_index = Hashtbl.create 0x7ff in
+  let cursors = Hashtbl.create 0x7ff in
   let hash = ref (String.make digest_length '\000') in
   let update_size ~parent offset size =
     Log.debug (fun m ->
@@ -332,6 +333,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         on ~max:!number_of_objects { offset; crc; consumed; size:> int }
         >|= fun () ->
         Hashtbl.add where offset entry.number;
+        Hashtbl.add cursors entry.number offset;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
         | Carton.First_pass.Base _ ->
@@ -387,10 +389,12 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   let size ~cursor = !(Hashtbl.find sizes cursor) in
   let checksum ~cursor = Hashtbl.find crcs cursor in
   let is_base ~pos = Hashtbl.find_opt is_base pos in
+  let cursor ~pos = Hashtbl.find cursors pos in
   {
     Carton.identify
   ; children
   ; where
+  ; cursor
   ; size
   ; checksum
   ; is_base
@@ -481,7 +485,14 @@ let of_stream_to_store ctx ~append stream =
     let { output; allocate; ref_length; digest; _ } = ctx in
     Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest `Manual
   in
-  go decoder (String.empty, 0, 0)
+  fun () -> Lwt_stream.get stream >>= function
+  | Some str ->
+      let len = Int.min (Bigarray.Array1.dim input) (String.length str) in
+      Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+      append str ~off:0 ~len >>= fun () ->
+      let decoder = Carton.First_pass.src decoder input 0 len in
+      go decoder (str, len, String.length str - len) ()
+  | None -> Lwt.return Lwt_seq.Nil
 
 let never uid = failwithf "Impossible to find the object %a" Carton.Uid.pp uid
 
@@ -506,7 +517,7 @@ let verify_from_stream
     Array.init oracle.Carton.number_of_objects @@ fun pos ->
     match oracle.is_base ~pos with
     | Some cursor -> Carton.Unresolved_base { cursor }
-    | None -> Unresolved_node
+    | None -> Unresolved_node { cursor= oracle.cursor ~pos }
   in
   verify ?threads ~on:on_object t oracle matrix >|= fun () ->
   (matrix, oracle.hash)
