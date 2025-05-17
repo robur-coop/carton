@@ -237,7 +237,7 @@ module First_pass = struct
       }
     in
     let rem = src_rem decoder in
-    if rem < 0 then malformedf "Unexpected end of input"
+    if rem < 0 then malformedf "First_pass.fill: Unexpected end of input"
     else
       let need = decoder.tmp_need - decoder.tmp_len in
       (* XXX(dinosaure): in the [`Manual] case, [input_pos = 1] and [blit] will
@@ -703,7 +703,15 @@ module First_pass = struct
       | `End hash -> Seq.Cons (`Hash hash, Fun.const Seq.Nil)
     in
     let decoder = decoder ~output ~allocate ~ref_length ~digest `Manual in
-    go decoder seq (String.empty, 0, 0)
+    fun () -> match Seq.uncons seq with
+    | Some (str, seq) ->
+        let len = Int.min (bstr_length input) (String.length str) in
+        Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+        let decoder = src decoder input 0 len in
+        go decoder seq (str, len, String.length str - len) ()
+    | None ->
+        Log.debug (fun m -> m "No PACK file are given");
+        Seq.Nil
 end
 
 let _max_depth = 60
