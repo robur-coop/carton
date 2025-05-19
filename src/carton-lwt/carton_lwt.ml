@@ -557,7 +557,7 @@ let apply ~ref_length ~load ~window:t entry =
     if i < len then begin
       let source = t.Window.arr.((t.Window.rd_pos + i) land msk) in
       if
-        Cartonnage.Source.depth source <= 50
+        Cartonnage.Source.depth source < 50
         && should_we_apply ~ref_length ~source entry
       then begin
         Lazy.force target >>= fun target ->
