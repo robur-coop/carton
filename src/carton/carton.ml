@@ -703,15 +703,16 @@ module First_pass = struct
       | `End hash -> Seq.Cons (`Hash hash, Fun.const Seq.Nil)
     in
     let decoder = decoder ~output ~allocate ~ref_length ~digest `Manual in
-    fun () -> match Seq.uncons seq with
-    | Some (str, seq) ->
-        let len = Int.min (bstr_length input) (String.length str) in
-        Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
-        let decoder = src decoder input 0 len in
-        go decoder seq (str, len, String.length str - len) ()
-    | None ->
-        Log.debug (fun m -> m "No PACK file are given");
-        Seq.Nil
+    fun () ->
+      match Seq.uncons seq with
+      | Some (str, seq) ->
+          let len = Int.min (bstr_length input) (String.length str) in
+          Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+          let decoder = src decoder input 0 len in
+          go decoder seq (str, len, String.length str - len) ()
+      | None ->
+          Log.debug (fun m -> m "No PACK file are given");
+          Seq.Nil
 end
 
 let _max_depth = 60

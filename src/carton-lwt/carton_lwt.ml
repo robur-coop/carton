@@ -485,14 +485,15 @@ let of_stream_to_store ctx ~append stream =
     let { output; allocate; ref_length; digest; _ } = ctx in
     Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest `Manual
   in
-  fun () -> Lwt_stream.get stream >>= function
-  | Some str ->
-      let len = Int.min (Bigarray.Array1.dim input) (String.length str) in
-      Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
-      append str ~off:0 ~len >>= fun () ->
-      let decoder = Carton.First_pass.src decoder input 0 len in
-      go decoder (str, len, String.length str - len) ()
-  | None -> Lwt.return Lwt_seq.Nil
+  fun () ->
+    Lwt_stream.get stream >>= function
+    | Some str ->
+        let len = Int.min (Bigarray.Array1.dim input) (String.length str) in
+        Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+        append str ~off:0 ~len >>= fun () ->
+        let decoder = Carton.First_pass.src decoder input 0 len in
+        go decoder (str, len, String.length str - len) ()
+    | None -> Lwt.return Lwt_seq.Nil
 
 let never uid = failwithf "Impossible to find the object %a" Carton.Uid.pp uid
 
