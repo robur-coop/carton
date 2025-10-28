@@ -41,6 +41,17 @@ val config :
   -> Carton.identify
   -> config
 
+val compile_on_seq :
+     ?on:(max:int -> entry -> unit)
+  -> identify:Carton.identify
+  -> digest_length:int
+  -> [ `Entry of Carton.First_pass.entry
+     | `Hash of string
+     | `Inflate of (Carton.Kind.t * int) option * string
+     | `Number of int ]
+     Seq.t
+  -> Carton.oracle
+
 val verify_from_pack :
      cfg:config
   -> digest:Carton.First_pass.digest

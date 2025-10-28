@@ -1,7 +1,7 @@
 (executable
  (name pack)
  (public_name carton)
- (package carton-miou-unix)
+ (package carton-miou)
  (enabled_if %{arch_sixtyfour})
  (libraries
   logs.cli
@@ -15,4 +15,4 @@
   digestif
   cmdliner
   progress
-  carton-miou-unix))
+  carton-miou.unix))

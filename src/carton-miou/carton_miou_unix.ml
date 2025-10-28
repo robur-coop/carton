@@ -348,6 +348,8 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   ; hash= !hash
   }
 
+let compile_on_seq = compile
+
 let verify_from_pack
     ~cfg:
       {

@@ -23,6 +23,7 @@ depends: [
   "digestif" {>= "1.2.0"}
   "progress" {>= "0.4.0"}
   "cmdliner" {>= "1.3.0"}
+  "flux"
 ]
 build: [
   ["dune" "subst"] {dev}
@@ -31,3 +32,6 @@ build: [
 ]
 dev-repo: "git+https://github.com/robur-coop/carton.git"
 x-maintenance-intent: [ "(latest)" ]
+pin-depends: [
+  [ "flux.dev" "git+https://github.com/robur-coop/flux.git#527a116071a93a221219d85b3f638d320f6ca93a" ]
+]

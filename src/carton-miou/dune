@@ -1,0 +1,14 @@
+(library
+ (name carton_miou_unix)
+ (modules carton_miou_unix)
+ (public_name carton-miou.unix)
+ (foreign_stubs
+  (language c)
+  (names pagesize))
+ (libraries fpath miou.unix carton carton.classeur carton.cartonnage))
+
+(library
+ (name carton_miou_flux)
+ (modules carton_miou_flux)
+ (public_name carton-miou.flux)
+ (libraries flux carton carton.classeur carton.cartonnage))
