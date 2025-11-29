@@ -88,7 +88,7 @@ let run _quiet compressed source patch target =
   else deflated_apply source ic target
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let existing_file =
   let parser str =

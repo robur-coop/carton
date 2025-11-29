@@ -111,7 +111,7 @@ let run _ digest (_filename, seq) =
   go None seq
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let input =
   let doc = "The PACK file to analyze." in

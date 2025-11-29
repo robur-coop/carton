@@ -1,6 +1,6 @@
 type file_descr = Unix.file_descr * int
 
-val map : file_descr -> pos:int -> int -> Cachet.bigstring
+val map : file_descr -> pos:int -> int -> Bstr.t
 
 val index :
      ?pagesize:int

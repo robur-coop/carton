@@ -124,7 +124,7 @@ let run _quiet threads pagesize digest pack output =
   Result.map_error (fun (`Msg msg) -> msg) result
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let pack =
   let doc =

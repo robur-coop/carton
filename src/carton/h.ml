@@ -78,7 +78,6 @@ module M = struct
       d.i_len <- j + l - 1)
 
   let dst d bstr off len =
-    Logs.debug (fun m -> m "off:%d, len:%d" off len);
     match d.s with
     | Postprocess ->
         if off < 0 || len < 0 || off + len > Bstr.length bstr then
@@ -623,7 +622,6 @@ module N = struct
     match v with
     | `Await -> k e
     | `Copy (off, len) ->
-        Logs.debug (fun m -> m "copy off:%d, len:%d" off len);
         let rem = o_rem e in
         let cmd = cmd off len in
         let required = 1 + M.required cmd in
@@ -650,7 +648,6 @@ module N = struct
         done;
         k e
     | `Insert p ->
-        Logs.debug (fun m -> m "insert len:%d" (String.length p));
         let rem = o_rem e in
         let required = 1 + String.length p in
         let s, j, k =

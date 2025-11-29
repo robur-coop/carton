@@ -32,6 +32,3 @@ build: [
 ]
 dev-repo: "git+https://github.com/robur-coop/carton.git"
 x-maintenance-intent: [ "(latest)" ]
-pin-depends: [
-  [ "flux.dev" "git+https://github.com/robur-coop/flux.git#527a116071a93a221219d85b3f638d320f6ca93a" ]
-]

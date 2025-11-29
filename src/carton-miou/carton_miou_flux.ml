@@ -1,3 +1,7 @@
+let src = Logs.Src.create "carton-miou.flux"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 type entry =
   [ `Number of int
   | `Inflate of (Carton.Kind.t * int) option * string
@@ -282,7 +286,7 @@ let rec resolve_tree q t oracle matrix ~base = function
       and depth = succ base.depth in
       (* NOTE(dinosaure): see our comment on [verify] about copy. *)
       let copy = Bstr.(copy (sub bstr ~off:0 ~len)) in
-      Flux.Bqueue.put q (Carton.Value.make ~kind ~depth copy, uid);
+      Flux.Bqueue.put q (Carton.Value.make ~kind ~depth copy, cursor, uid);
       matrix.(pos) <-
         Carton.Resolved_node { cursor; uid; crc; kind; depth; parent= base.uid };
       let children = oracle.children ~cursor ~uid in
@@ -308,7 +312,7 @@ let rec resolve_tree q t oracle matrix ~base = function
           and depth = succ base.depth in
           (* NOTE(dinosaure): see our comment on [verify] about copy. *)
           let copy = Bstr.(copy (sub bstr ~off:0 ~len)) in
-          Flux.Bqueue.put q (Carton.Value.make ~kind ~depth copy, uid);
+          Flux.Bqueue.put q (Carton.Value.make ~kind ~depth copy, cursor, uid);
           matrix.(pos) <-
             Resolved_node { cursor; uid; crc; kind; depth; parent= base.uid };
           let children = oracle.children ~cursor ~uid in
@@ -340,6 +344,7 @@ let verify ?(threads = 4) q t oracle matrix =
       done;
       Atomic.fetch_and_add idx 1
     in
+    Log.debug (fun m -> m "Resolve object %d/%d" pos (Array.length matrix));
     if pos < Array.length matrix then begin
       let[@warning "-8"] (Carton.Unresolved_base { cursor }) = matrix.(pos) in
       let size = oracle.Carton.size ~cursor in
@@ -354,7 +359,7 @@ let verify ?(threads = 4) q t oracle matrix =
          to safely pass it to another process which will own our copy. We can
          safely re-use our [blob] then. *)
       let copy = Bstr.(copy (sub bstr ~off:0 ~len)) in
-      Flux.Bqueue.put q (Carton.Value.make ~kind copy, uid);
+      Flux.Bqueue.put q (Carton.Value.make ~kind copy, cursor, uid);
       matrix.(pos) <- Resolved_base { cursor; uid; crc; kind };
       let children = oracle.children ~cursor ~uid in
       let children = Array.of_list children in

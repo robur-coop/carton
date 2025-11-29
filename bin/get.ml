@@ -128,7 +128,7 @@ let run quiet hxd format_of_output (output_filename, output) without_metadata
   else Ok ()
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let format_of_output =
   let open Arg in

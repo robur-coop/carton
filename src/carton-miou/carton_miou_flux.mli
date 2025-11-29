@@ -14,4 +14,4 @@ val entries :
      ?threads:int
   -> 'fd Carton.t
   -> Carton.oracle
-  -> (Carton.Value.t * Carton.Uid.t) Flux.source
+  -> (Carton.Value.t * int * Carton.Uid.t) Flux.source

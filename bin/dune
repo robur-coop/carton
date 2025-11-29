@@ -3,16 +3,24 @@
  (public_name carton)
  (package carton-miou)
  (enabled_if %{arch_sixtyfour})
+ (modules apply diff explode get index list make merge pack verify)
+ (libraries cmdliner carton.cli carton-miou.unix))
+
+(library
+ (name carton_cli)
+ (public_name carton.cli)
+ (modules carton_cli)
  (libraries
+  logs.threaded
   logs.cli
   logs.fmt
-  logs.threaded
+  fmt
+  fmt.tty
+  fmt.cli
   hxd.core
   hxd.string
-  fmt
-  fmt.cli
-  fmt.tty
   digestif
-  cmdliner
+  carton
   progress
-  carton-miou.unix))
+  fpath
+  cmdliner))

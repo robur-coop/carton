@@ -30,7 +30,7 @@ module Source : sig
   val uid : 'meta t -> Carton.Uid.t
   val length : 'meta t -> int
   val kind : 'meta t -> Carton.Kind.t
-  val bigstring : 'meta t -> Cachet.bigstring
+  val bigstring : 'meta t -> Bstr.t
   val index : 'meta t -> Duff.index
 end
 
@@ -45,7 +45,7 @@ module Patch : sig
     -> Duff.hunk list
     -> t
 
-  val of_copy : depth:int -> source:Carton.Uid.t -> Cachet.bigstring -> t
+  val of_copy : depth:int -> source:Carton.Uid.t -> Bstr.t -> t
   val source : t -> Carton.Uid.t
   val pp : Format.formatter -> t -> unit
   val length : t -> int
