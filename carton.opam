@@ -19,12 +19,7 @@ depends: [
   "optint"
   "checkseum"
   "bstr"
-  "fpath"
-  "digestif"
-  "cmdliner"
-  "hxd"
   "decompress" {>= "1.5.0"}
-  "progress"
   "logs"
   "ohex"
 ]

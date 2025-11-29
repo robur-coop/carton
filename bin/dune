@@ -4,11 +4,11 @@
  (package carton-miou)
  (enabled_if %{arch_sixtyfour})
  (modules apply diff explode get index list make merge pack verify)
- (libraries cmdliner carton.cli carton-miou.unix))
+ (libraries cmdliner carton-miou.cli carton-miou.unix))
 
 (library
  (name carton_cli)
- (public_name carton.cli)
+ (public_name carton-miou.cli)
  (modules carton_cli)
  (libraries
   logs.threaded
