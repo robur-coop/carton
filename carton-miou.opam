@@ -23,6 +23,7 @@ depends: [
   "digestif" {>= "1.2.0"}
   "progress" {>= "0.4.0"}
   "cmdliner" {>= "1.3.0"}
+  "flux"
 ]
 build: [
   ["dune" "subst"] {dev}

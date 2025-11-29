@@ -297,12 +297,11 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
                   offset Carton.Uid.pp ptr
                   (source :> int)
                   (target :> int));
-            begin
-              match Hashtbl.find_opt index ptr with
-              | Some parent ->
-                  update_size ~parent offset (Carton.Size.max source target)
-              | None ->
-                  Hashtbl.add sizes offset (ref (Carton.Size.max source target))
+            begin match Hashtbl.find_opt index ptr with
+            | Some parent ->
+                update_size ~parent offset (Carton.Size.max source target)
+            | None ->
+                Hashtbl.add sizes offset (ref (Carton.Size.max source target))
             end;
             Hashtbl.add ref_index offset ptr;
             new_child ~parent:(`Ref ptr) offset
@@ -347,6 +346,8 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   ; number_of_objects= !number_of_objects
   ; hash= !hash
   }
+
+let compile_on_seq = compile
 
 let verify_from_pack
     ~cfg:
@@ -707,30 +708,29 @@ let delta ~ref_length ~load =
   let entry = Cartonnage.Target.make entry in
   let k = Carton.Kind.to_int (Cartonnage.Target.kind entry) in
   let target = apply ~ref_length ~load ~window:windows.(k) entry in
-  begin
-    match (target, not (Window.is_full windows.(k))) with
-    | None, false -> ()
-    | None, true ->
-        if Cartonnage.Target.depth entry < 50 then begin
-          let uid = Cartonnage.Target.uid entry
-          and meta = Cartonnage.Target.meta entry in
-          let target = load uid meta in
-          let source = Cartonnage.Target.to_source entry ~target in
-          Log.debug (fun m ->
-              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
-                (Cartonnage.Source.uid source)
-                (Cartonnage.Target.depth entry));
-          append ~window:windows.(k) source
-        end
-    | Some target, _ ->
-        if Cartonnage.Target.depth entry < 50 then begin
-          let source = Cartonnage.Target.to_source entry ~target in
-          Log.debug (fun m ->
-              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
-                (Cartonnage.Source.uid source)
-                (Cartonnage.Target.depth entry));
-          append ~window:windows.(k) source
-        end
+  begin match (target, not (Window.is_full windows.(k))) with
+  | None, false -> ()
+  | None, true ->
+      if Cartonnage.Target.depth entry < 50 then begin
+        let uid = Cartonnage.Target.uid entry
+        and meta = Cartonnage.Target.meta entry in
+        let target = load uid meta in
+        let source = Cartonnage.Target.to_source entry ~target in
+        Log.debug (fun m ->
+            m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+              (Cartonnage.Source.uid source)
+              (Cartonnage.Target.depth entry));
+        append ~window:windows.(k) source
+      end
+  | Some target, _ ->
+      if Cartonnage.Target.depth entry < 50 then begin
+        let source = Cartonnage.Target.to_source entry ~target in
+        Log.debug (fun m ->
+            m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+              (Cartonnage.Source.uid source)
+              (Cartonnage.Target.depth entry));
+        append ~window:windows.(k) source
+      end
   end;
   entry
 
@@ -853,30 +853,29 @@ let delta_from_pack ~ref_length ~windows =
   Hashtbl.add stored
     (Cartonnage.Target.uid entry)
     (Cartonnage.Target.depth entry);
-  begin
-    match (target, not (Window.is_full windows.(k))) with
-    | None, false -> ()
-    | None, true ->
-        if Cartonnage.Target.depth entry < 50 then begin
-          let uid = Cartonnage.Target.uid entry
-          and meta = Cartonnage.Target.meta entry in
-          let target = load uid meta in
-          let source = Cartonnage.Target.to_source entry ~target in
-          Log.debug (fun m ->
-              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
-                (Cartonnage.Source.uid source)
-                (Cartonnage.Target.depth entry));
-          append ~window:windows.(k) source
-        end
-    | Some target, _ ->
-        if Cartonnage.Target.depth entry < 50 then begin
-          let source = Cartonnage.Target.to_source entry ~target in
-          Log.debug (fun m ->
-              m "add %a as a possible source (depth: %d)" Carton.Uid.pp
-                (Cartonnage.Source.uid source)
-                (Cartonnage.Target.depth entry));
-          append ~window:windows.(k) source
-        end
+  begin match (target, not (Window.is_full windows.(k))) with
+  | None, false -> ()
+  | None, true ->
+      if Cartonnage.Target.depth entry < 50 then begin
+        let uid = Cartonnage.Target.uid entry
+        and meta = Cartonnage.Target.meta entry in
+        let target = load uid meta in
+        let source = Cartonnage.Target.to_source entry ~target in
+        Log.debug (fun m ->
+            m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+              (Cartonnage.Source.uid source)
+              (Cartonnage.Target.depth entry));
+        append ~window:windows.(k) source
+      end
+  | Some target, _ ->
+      if Cartonnage.Target.depth entry < 50 then begin
+        let source = Cartonnage.Target.to_source entry ~target in
+        Log.debug (fun m ->
+            m "add %a as a possible source (depth: %d)" Carton.Uid.pp
+              (Cartonnage.Source.uid source)
+              (Cartonnage.Target.depth entry));
+        append ~window:windows.(k) source
+      end
   end;
   entry
 

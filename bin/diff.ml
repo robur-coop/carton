@@ -23,11 +23,10 @@ let deflated_diff source target oc =
       in
       m "%d byte(s) saved" saved);
   (* NOTE(dinosaure): a pretty special case. *)
-  begin
-    match duff with
-    | [ Duff.Insert (0, 0) ] ->
-        Fmt.failwith "No difference between the source and the target"
-    | _ -> ()
+  begin match duff with
+  | [ Duff.Insert (0, 0) ] ->
+      Fmt.failwith "No difference between the source and the target"
+  | _ -> ()
   end;
   let src = Cachet.Bstr.of_bigstring src in
   let dst = Cachet.Bstr.of_bigstring dst in
@@ -101,7 +100,7 @@ let run _quiet compressed source target output =
   else deflated_diff source target oc
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let existing_file =
   let parser str =

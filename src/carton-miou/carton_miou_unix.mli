@@ -1,6 +1,6 @@
 type file_descr = Unix.file_descr * int
 
-val map : file_descr -> pos:int -> int -> Cachet.bigstring
+val map : file_descr -> pos:int -> int -> Bstr.t
 
 val index :
      ?pagesize:int
@@ -40,6 +40,17 @@ val config :
   -> ref_length:int
   -> Carton.identify
   -> config
+
+val compile_on_seq :
+     ?on:(max:int -> entry -> unit)
+  -> identify:Carton.identify
+  -> digest_length:int
+  -> [ `Entry of Carton.First_pass.entry
+     | `Hash of string
+     | `Inflate of (Carton.Kind.t * int) option * string
+     | `Number of int ]
+     Seq.t
+  -> Carton.oracle
 
 val verify_from_pack :
      cfg:config

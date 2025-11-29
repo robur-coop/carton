@@ -62,7 +62,7 @@ let run _quiet threads pagesize digest filenames output =
   Ok ()
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let output =
   let doc = "The new PACK file." in

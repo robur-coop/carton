@@ -91,7 +91,7 @@ let run quiet threads pagesize digest fmt_kind fmt_path (Fmt (_, fmt_output))
   Ok ()
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let fmt_kind =
   let open Arg in

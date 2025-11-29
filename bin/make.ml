@@ -244,7 +244,7 @@ let run quiet progress without_progress header signature without_signature
   Ok ()
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let number_of_entries =
   let doc =

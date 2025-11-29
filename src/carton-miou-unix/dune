@@ -1,7 +1,0 @@
-(library
- (name carton_miou_unix)
- (public_name carton-miou-unix)
- (foreign_stubs
-  (language c)
-  (names pagesize))
- (libraries fpath miou.unix carton carton.classeur carton.cartonnage))

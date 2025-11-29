@@ -246,7 +246,7 @@ module Encoder = struct
     | R { src_len= 0; _ } -> `End
     | R { src; src_off; src_len; dst_off; dst_len } ->
         let len = Int.min src_len dst_len in
-        Cachet.memcpy src ~src_off o ~dst_off ~len;
+        Bstr.memcpy src ~src_off o ~dst_off ~len;
         let state =
           R
             {

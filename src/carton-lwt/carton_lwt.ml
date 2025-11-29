@@ -216,17 +216,14 @@ let verify ?(threads = 4) ?(on = ignore3) t oracle matrix =
   let mutex = Lwt_mutex.create () in
   let idx = ref 0 in
   let rec fn t =
-    Lwt_mutex.with_lock mutex
-      begin
-        fun () ->
-          while
-            !idx < Array.length matrix
-            && is_unresolved_base matrix.(!idx) = false
-          do
-            incr idx
-          done;
-          let value = !idx in
-          incr idx; Lwt.return value
+    Lwt_mutex.with_lock mutex begin fun () ->
+        while
+          !idx < Array.length matrix && is_unresolved_base matrix.(!idx) = false
+        do
+          incr idx
+        done;
+        let value = !idx in
+        incr idx; Lwt.return value
       end
     >>= fun pos ->
     if pos < Array.length matrix then begin
@@ -351,12 +348,11 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
             update_size ~parent offset (Carton.Size.max source target);
             new_child ~parent:(`Ofs parent) offset
         | Ref { ptr; source; target; _ } ->
-            begin
-              match Hashtbl.find_opt index ptr with
-              | Some parent ->
-                  update_size ~parent offset (Carton.Size.max source target)
-              | None ->
-                  Hashtbl.add sizes offset (ref (Carton.Size.max source target))
+            begin match Hashtbl.find_opt index ptr with
+            | Some parent ->
+                update_size ~parent offset (Carton.Size.max source target)
+            | None ->
+                Hashtbl.add sizes offset (ref (Carton.Size.max source target))
             end;
             Hashtbl.add ref_index offset ptr;
             new_child ~parent:(`Ref ptr) offset
@@ -467,14 +463,13 @@ let of_stream_to_store ctx ~append stream =
         end
     | `Entry (entry, decoder) ->
         let next = go decoder (str, src_off, src_len) in
-        begin
-          match !first with
-          | true ->
-              first := false;
-              let n = Carton.First_pass.number_of_objects decoder in
-              let next = Lwt_seq.cons (`Entry entry) next in
-              Lwt.return (Lwt_seq.Cons (`Number n, next))
-          | false -> Lwt.return (Lwt_seq.Cons (`Entry entry, next))
+        begin match !first with
+        | true ->
+            first := false;
+            let n = Carton.First_pass.number_of_objects decoder in
+            let next = Lwt_seq.cons (`Entry entry) next in
+            Lwt.return (Lwt_seq.Cons (`Number n, next))
+        | false -> Lwt.return (Lwt_seq.Cons (`Entry entry, next))
         end
     | `Malformed err ->
         Log.err (fun m -> m "Invalid PACK: %s" err);
@@ -485,14 +480,15 @@ let of_stream_to_store ctx ~append stream =
     let { output; allocate; ref_length; digest; _ } = ctx in
     Carton.First_pass.decoder ~output ~allocate ~ref_length ~digest `Manual
   in
-  fun () -> Lwt_stream.get stream >>= function
-  | Some str ->
-      let len = Int.min (Bigarray.Array1.dim input) (String.length str) in
-      Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
-      append str ~off:0 ~len >>= fun () ->
-      let decoder = Carton.First_pass.src decoder input 0 len in
-      go decoder (str, len, String.length str - len) ()
-  | None -> Lwt.return Lwt_seq.Nil
+  fun () ->
+    Lwt_stream.get stream >>= function
+    | Some str ->
+        let len = Int.min (Bigarray.Array1.dim input) (String.length str) in
+        Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+        append str ~off:0 ~len >>= fun () ->
+        let decoder = Carton.First_pass.src decoder input 0 len in
+        go decoder (str, len, String.length str - len) ()
+    | None -> Lwt.return Lwt_seq.Nil
 
 let never uid = failwithf "Impossible to find the object %a" Carton.Uid.pp uid
 
@@ -594,20 +590,19 @@ let delta ~ref_length ~load =
       m "patch found for %a? %b" Carton.Uid.pp
         (Cartonnage.Target.uid entry)
         Option.(is_some (Cartonnage.Target.patch entry)));
-  begin
-    match (target, not (Window.is_full windows.(k))) with
-    | None, false -> Lwt.return_unit
-    | None, true ->
-        let uid = Cartonnage.Target.uid entry
-        and meta = Cartonnage.Target.meta entry in
-        load uid meta >>= fun target ->
-        let source = Cartonnage.Target.to_source entry ~target in
-        append ~window:windows.(k) source;
-        Lwt.return_unit
-    | Some target, _ ->
-        let source = Cartonnage.Target.to_source entry ~target in
-        append ~window:windows.(k) source;
-        Lwt.return_unit
+  begin match (target, not (Window.is_full windows.(k))) with
+  | None, false -> Lwt.return_unit
+  | None, true ->
+      let uid = Cartonnage.Target.uid entry
+      and meta = Cartonnage.Target.meta entry in
+      load uid meta >>= fun target ->
+      let source = Cartonnage.Target.to_source entry ~target in
+      append ~window:windows.(k) source;
+      Lwt.return_unit
+  | Some target, _ ->
+      let source = Cartonnage.Target.to_source entry ~target in
+      append ~window:windows.(k) source;
+      Lwt.return_unit
   end
   >|= fun () -> entry
 

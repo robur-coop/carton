@@ -216,8 +216,7 @@ module First_pass = struct
         let rem = src_rem decoder in
         if rem < decoder.tmp_peek then begin
           let src_off = decoder.input_pos in
-          Cachet.memmove decoder.input ~src_off decoder.input ~dst_off:0
-            ~len:rem;
+          Bstr.memmove decoder.input ~src_off decoder.input ~dst_off:0 ~len:rem;
           `Peek { decoder with k= peek k; input_pos= 0; input_len= rem - 1 }
         end
         else k decoder
@@ -228,7 +227,7 @@ module First_pass = struct
   let rec tmp_fill k decoder =
     let blit decoder len =
       let src_off = decoder.input_pos and dst_off = decoder.tmp_len in
-      Cachet.memcpy decoder.input ~src_off decoder.tmp ~dst_off ~len;
+      Bstr.memcpy decoder.input ~src_off decoder.tmp ~dst_off ~len;
       {
         decoder with
         input_pos= decoder.input_pos + len
@@ -690,28 +689,28 @@ module First_pass = struct
           Seq.Cons (`Inflate (kind, payload), next)
       | `Entry (entry, decoder) ->
           let next = go decoder seq (str, src_off, src_len) in
-          begin
-            match !first with
-            | true ->
-                first := false;
-                let n = number_of_objects decoder in
-                let next () = Seq.Cons (`Entry entry, next) in
-                Seq.Cons (`Number n, next)
-            | false -> Seq.Cons (`Entry entry, next)
+          begin match !first with
+          | true ->
+              first := false;
+              let n = number_of_objects decoder in
+              let next () = Seq.Cons (`Entry entry, next) in
+              Seq.Cons (`Number n, next)
+          | false -> Seq.Cons (`Entry entry, next)
           end
       | `Malformed err -> failwith err
       | `End hash -> Seq.Cons (`Hash hash, Fun.const Seq.Nil)
     in
     let decoder = decoder ~output ~allocate ~ref_length ~digest `Manual in
-    fun () -> match Seq.uncons seq with
-    | Some (str, seq) ->
-        let len = Int.min (bstr_length input) (String.length str) in
-        Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
-        let decoder = src decoder input 0 len in
-        go decoder seq (str, len, String.length str - len) ()
-    | None ->
-        Log.debug (fun m -> m "No PACK file are given");
-        Seq.Nil
+    fun () ->
+      match Seq.uncons seq with
+      | Some (str, seq) ->
+          let len = Int.min (bstr_length input) (String.length str) in
+          Bstr.blit_from_string str ~src_off:0 input ~dst_off:0 ~len;
+          let decoder = src decoder input 0 len in
+          go decoder seq (str, len, String.length str - len) ()
+      | None ->
+          Log.debug (fun m -> m "No PACK file are given");
+          Seq.Nil
 end
 
 let _max_depth = 60
@@ -1051,6 +1050,25 @@ and of_offset t blob ~cursor =
   | 0b100 -> uncompress t `D blob ~cursor:cursor'
   | 0b110 -> of_ofs_delta t blob ~anchor:cursor ~cursor:cursor'
   | 0b111 -> of_ref_delta t blob ~cursor:cursor'
+  | _ -> assert false
+
+let rec kind_of_offset t ~cursor =
+  let (kind, _size), cursor' = header_of_entry t ~cursor in
+  match kind with
+  | 0b000 | 0b101 -> raise Bad_type
+  | 0b001 -> `A
+  | 0b010 -> `B
+  | 0b011 -> `C
+  | 0b100 -> `D
+  | 0b110 ->
+      let rel_offset, _ = header_of_ofs_delta t ~cursor:cursor' in
+      kind_of_offset t ~cursor:(cursor - rel_offset)
+  | 0b111 -> begin
+      let uid = header_of_ref_delta t ~cursor:cursor' in
+      match t.where uid with
+      | Local cursor -> kind_of_offset t ~cursor
+      | Extern (kind, _) -> kind
+    end
   | _ -> assert false
 
 module Path = struct

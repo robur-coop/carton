@@ -163,7 +163,7 @@ let run quiet progress without_progress threads pagesize digest without_consumed
   Ok ()
 
 open Cmdliner
-open Args
+open Carton_cli
 
 let pack =
   let doc =

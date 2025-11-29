@@ -483,6 +483,8 @@ val size_of_offset :
     from the PACK file. This does {b not} correspond to the size of the object.
 *)
 
+val kind_of_offset : 'fd t -> cursor:int -> Kind.t
+
 val size_of_uid : 'fd t -> ?visited:Visited.t -> uid:Uid.t -> Size.t -> Size.t
 (** [size_of_uid pack ?visited ~uid size] returns the size of the buffers (see
     {!module:Blob}s) required to extract the object identified by [uid] from the
