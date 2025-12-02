@@ -874,7 +874,12 @@ exception Cycle
 module Visited = struct
   type t = { depth: int; path: int array }
 
-  let empty = { depth= 0; path= Array.make _max_depth (-1) }
+  let empty () = { depth= 0; path= Array.make _max_depth (-1) }
+
+  let pp ppf { depth; path } =
+    Fmt.pf ppf "@[<hov>{ depth=@ %d;@ path=@ @[<hov>%a@]; }@]" depth
+      Fmt.(Dump.array (fmt "%08x"))
+      path
 
   let already_visited { path; depth } ~cursor =
     let exception Yes in
@@ -904,8 +909,12 @@ and size_of_uid t ?visited ~uid size =
   | Local cursor -> (size_of_offset [@tailcall]) t ?visited ~cursor size
   | Extern (_kind, bstr) -> Int.max size (Bstr.length bstr)
 
-and size_of_offset t ?(visited = Visited.empty) ~cursor size =
-  if Visited.already_visited visited ~cursor then raise Cycle;
+and size_of_offset t ?(visited = Visited.empty ()) ~cursor size =
+  if Visited.already_visited visited ~cursor then begin
+    Log.err (fun m ->
+        m "Found a cycle with %a and %08x" Visited.pp visited cursor);
+    raise Cycle
+  end;
   visited.path.(visited.depth) <- cursor;
   let visited = { visited with depth= succ visited.depth } in
   if visited.depth >= _max_depth then raise Too_deep;
