@@ -383,4 +383,5 @@ let entries ?threads pack oracle =
     | Some cursor -> Carton.Unresolved_base { cursor }
     | None -> Unresolved_node { cursor= oracle.cursor ~pos }
   in
-  verify ?threads q pack oracle matrix
+  verify ?threads q pack oracle matrix;
+  Flux.Bqueue.close q
