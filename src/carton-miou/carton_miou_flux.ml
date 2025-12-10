@@ -200,10 +200,17 @@ let oracle ~identify =
           Hashtbl.add t.cursors entry.number offset;
           Hashtbl.add t.crcs offset crc;
           match entry.Carton.First_pass.kind with
-          | Carton.First_pass.Base _ ->
+          | Carton.First_pass.Base kind ->
               Hashtbl.add t.sizes offset (ref size);
               Hashtbl.add t.bases entry.number offset;
-              let uid = Option.get (Option.map t.identify.serialize t.ctx) in
+              let uid =
+                match Option.map t.identify.serialize t.ctx with
+                | Some uid -> uid
+                | None ->
+                    let size = entry.Carton.First_pass.size in
+                    let ctx = t.identify.init kind size in
+                    t.identify.serialize ctx
+              in
               t.ctx <- None;
               Hashtbl.add t.index uid offset
           | Ofs { sub; source; target; _ } ->
