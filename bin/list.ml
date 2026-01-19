@@ -97,6 +97,14 @@ let run _ digest (_filename, seq) =
         let size = (entry.Carton.First_pass.size :> int) in
         let consumed = entry.Carton.First_pass.consumed in
         let crc = Optint.to_int32 entry.Carton.First_pass.crc in
+        let ctx =
+          match (ctx, entry.kind) with
+          | None, Carton.First_pass.Base kind ->
+              let size = entry.Carton.First_pass.size in
+              let ctx = empty (kind, (size :> int)) in
+              Some ctx
+          | ctx, _ -> ctx
+        in
         let uid = Option.map SHA1.get ctx in
         Fmt.pr "%010x: %a\n%!" offset (pp_kind ?uid ~offset) kind;
         Fmt.pr "      size: %a\n%!" pp_bytes (size :> int);
