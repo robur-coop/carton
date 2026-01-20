@@ -1,3 +1,11 @@
+### 1.1.0 (2025-06-17) Paris - France
+
+- Expose inflated entries when we analyze a PACK file (#8, @dinosaure)
+- Fix the semantic of `Carton.First_pass.of_seq` (#9, @dinosaure)
+- Be able to load external objects when they are required for a PACK file (#9, @dinosaure)
+- Fix the compilation of carton on OCaml 4.14 (#10, @hannesm)
+- Fix limit when we generate a PACK file with the lwt layer (#11, @dinosaure)
+
 ### 1.0.0 (2025-01-13) Paris - France
 
 - New version of Carton
