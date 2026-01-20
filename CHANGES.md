@@ -1,3 +1,9 @@
+### 1.2.0 (2026-01-20) Paris - France
+
+- Re-organize the distribution layout (specially about `carton-miou`) (@dinosaure, #12)
+- Fix when we process an empty object (@dinosaure, #14, #16)
+- Be sure to close our `Flux` stream at the end of our analyze (@dinosaure, #15)
+
 ### 1.1.0 (2025-06-17) Paris - France
 
 - Expose inflated entries when we analyze a PACK file (#8, @dinosaure)
