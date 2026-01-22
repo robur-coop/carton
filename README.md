@@ -1,17 +1,17 @@
 # Carton, the PACKv2 implementation in OCaml
 
-A PACK file is a file containing compressed “objects”. In the Git context,
+A PACK file is a file containing compressed "objects". In the Git context,
 these objects are commits, trees, blobs and tags. The advantage of the PACK
 format is that you can compress these objects together, while retaining the
 possibility of extracting them almost independently of the others: this is
-known as _“random” access_ to these objects.
+known as _"random" access_ to these objects. 
 
 We therefore have the advantage of compression (the size of the PACK file is
 comparable to a `*.tar.gz` archive) and the benefit of extracting these objects
 without necessarily inflating the previous ones.
 
 The PACK file is a format used by Git that you can find in your Git
-repositories at “.git/objects/pack/”. This is what is transmitted when you clone
+repositories at ".git/objects/pack/". This is what is transmitted when you clone
 a repository.
 
 Carton is a small library for manipulating and generating PACK files produced
@@ -60,12 +60,12 @@ $ carton get new.idx 17c2336bccb3b4fbd6eb430bf5fe1c4f1f8184e3
 These tools are actuallly not designed to be used in production, but any
 feedback (such as the discovery of bugs) is appreciated to improve them.
 
-These tools use Miou as a scheduler to take advantage of parallelism as early
-as possible, especially when it comes to calculating and checking PACK files.
-This is where the `carton-miou-unix` package comes in. However, as mentioned
-above, the core of Carton is independent of any scheduler. A derivation with
-lwt is also available, but does not offer the tools shown above. `carton-lwt`
-can, however, be used as a library to manipulate PACK files.
+These tools use Miou as a scheduler to take advantage of parallelism,
+especially when it comes to calculating and checking PACK files. This is where
+the `carton-miou` package comes in. However, as mentioned above, the core
+of Carton is independent of any scheduler. A derivation with lwt is also
+available, but does not offer the tools shown above. `carton-lwt` can, however,
+be used as a library to manipulate PACK files.
 
 ## Benchmarks
 
@@ -92,7 +92,7 @@ Summary
 ```
 
 As you can see, the pure OCaml implementation is 2 times slower than the C
-implementation. There are several reasons for this - the first is that most of
+implementation. There are several reasons for this — the first is that most of
 the basic operations such as decompression are done in OCaml (and not in C).
 Other parameters such as GC can also be considered.
 
