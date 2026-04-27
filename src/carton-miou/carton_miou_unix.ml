@@ -87,7 +87,7 @@ type base = { value: Carton.Value.t; uid: Carton.Uid.t; depth: int }
 
 let identify (Carton.Identify gen) ~kind ~len bstr =
   let ctx = gen.Carton.First_pass.init kind (Carton.Size.of_int_exn len) in
-  let ctx = gen.Carton.First_pass.feed (Bigarray.Array1.sub bstr 0 len) ctx in
+  let ctx = gen.Carton.First_pass.feed (Bstr.sub bstr ~off:0 ~len) ctx in
   gen.Carton.First_pass.serialize ctx
 
 let rec resolve_tree ?(on = ignore3) t oracle matrix ~base = function
@@ -759,8 +759,8 @@ let digest str (Carton.First_pass.Digest (({ feed_bytes; _ } as hash), ctx)) =
 
 let to_pack ?with_header ?with_signature ?cursor ?level ~load targets =
   let ctx =
-    let o = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0x1000
-    and i = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0x1000
+    let o = Bstr.create 0x1000
+    and i = Bstr.create 0x1000
     and q = De.Queue.create 0x1000
     and w = De.Lz77.make_window ~bits:15 in
     let buffers = Cartonnage.{ o; i; q; w } in
@@ -773,9 +773,7 @@ let to_pack ?with_header ?with_signature ?cursor ?level ~load targets =
     | `Flush (encoder, len) ->
         let str = Bstr.sub_string dst ~off:0 ~len in
         let signature = Option.map (digest str) ctx.signature in
-        let encoder =
-          Cartonnage.Encoder.dst encoder dst 0 (Bigarray.Array1.dim dst)
-        in
+        let encoder = Cartonnage.Encoder.dst encoder dst 0 (Bstr.length dst) in
         let ctx = { ctx with signature } in
         let next () = go ctx targets encoder (cursor + len) in
         Seq.Cons (str, next)
