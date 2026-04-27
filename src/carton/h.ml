@@ -517,15 +517,15 @@ module R = struct
     let decoder = decoder `Manual in
     let rec go seq =
       match decode decoder with
-      | `Await -> begin
-          match Seq.uncons seq with
+      | `Await ->
+          begin match Seq.uncons seq with
           | Some (str, seq) ->
               src decoder str 0 (String.length str);
               go seq
           | None ->
               src decoder String.empty 0 0;
               go seq
-        end
+          end
       | (`Header _ | `Copy _ | `Insert _) as value ->
           let next () = go seq in
           Seq.Cons (value, next)

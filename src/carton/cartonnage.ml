@@ -233,16 +233,16 @@ module Encoder = struct
     | `End -> `End
 
   let encode ~o = function
-    | Z encoder -> begin
-        match encode_zlib ~o encoder with
+    | Z encoder ->
+        begin match encode_zlib ~o encoder with
         | `Flush (encoder, len) -> `Flush (Z encoder, len)
         | `End -> `End
-      end
-    | H encoder -> begin
-        match encode_hunk ~o encoder with
+        end
+    | H encoder ->
+        begin match encode_hunk ~o encoder with
         | `Flush (encoder, len) -> `Flush (H encoder, len)
         | `End -> `End
-      end
+        end
     | R { src_len= 0; _ } -> `End
     | R { src; src_off; src_len; dst_off; dst_len } ->
         let len = Int.min src_len dst_len in

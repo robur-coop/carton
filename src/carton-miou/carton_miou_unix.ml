@@ -232,18 +232,18 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   in
   let new_child ~parent child =
     match parent with
-    | `Ofs parent -> begin
-        match Hashtbl.find_opt children_by_offset parent with
+    | `Ofs parent ->
+        begin match Hashtbl.find_opt children_by_offset parent with
         | None -> Hashtbl.add children_by_offset parent [ child ]
         | Some offsets ->
             Hashtbl.replace children_by_offset parent (child :: offsets)
-      end
-    | `Ref parent -> begin
-        match Hashtbl.find_opt children_by_uid parent with
+        end
+    | `Ref parent ->
+        begin match Hashtbl.find_opt children_by_uid parent with
         | None -> Hashtbl.add children_by_uid parent [ child ]
         | Some offsets ->
             Hashtbl.replace children_by_uid parent (child :: offsets)
-      end
+        end
   in
   let number_of_objects = ref 0 in
   let (Carton.Identify i) = identify in
@@ -777,13 +777,13 @@ let to_pack ?with_header ?with_signature ?cursor ?level ~load targets =
     | `End -> consume ctx targets cursor
   and consume ctx targets cursor =
     match Seq.uncons targets with
-    | None -> begin
-        match ctx.signature with
+    | None ->
+        begin match ctx.signature with
         | Some Carton.First_pass.(Digest ({ serialize; _ }, ctx)) ->
             let signature = serialize ctx in
             Seq.Cons (signature, Fun.const Seq.Nil)
         | None -> Seq.Nil
-      end
+        end
     | Some (entry, targets) ->
         let uid = Cartonnage.Target.uid entry
         and meta = Cartonnage.Target.meta entry in
@@ -845,14 +845,14 @@ let delta_from_pack ~ref_length ~windows =
   let delta = Cartonnage.Entry.meta entry in
   let entry =
     match delta with
-    | _, Some { source; raw; _ } when Hashtbl.mem stored source -> begin
-        match Hashtbl.find_opt stored source with
+    | _, Some { source; raw; _ } when Hashtbl.mem stored source ->
+        begin match Hashtbl.find_opt stored source with
         | Some depth ->
             let raw = (raw :> Bstr.t) in
             let patch = Cartonnage.Patch.of_copy ~depth ~source raw in
             Cartonnage.Target.make ~patch entry
         | None -> Cartonnage.Target.make entry
-      end
+        end
     | _ -> Cartonnage.Target.make entry
   in
   let k = Carton.Kind.to_int (Cartonnage.Target.kind entry) in

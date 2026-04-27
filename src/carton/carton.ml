@@ -534,8 +534,8 @@ module First_pass = struct
             let state = Entry entry in
             `Inflate (str, { decoder with state })
       end
-    | Inflate ({ kind= Ofs _ | Ref _; crc; _ } as entry) -> begin
-        match Zl.Inf.decode decoder.zlib with
+    | Inflate ({ kind= Ofs _ | Ref _; crc; _ } as entry) ->
+        begin match Zl.Inf.decode decoder.zlib with
         | `Await zlib ->
             let len = src_rem decoder - Zl.Inf.src_rem zlib in
             let crc = crc_decoder decoder ~len crc in
@@ -605,7 +605,7 @@ module First_pass = struct
             let entry = { entry with consumed } in
             let state = Entry entry in
             `Inflate (str, { decoder with state })
-      end
+        end
     | Hash -> refill_uid verify_signature decoder
 
   let decoder ~output ~allocate ~ref_length ~digest src =
@@ -815,15 +815,15 @@ let size_of_delta t ~cursor size =
     | `End _ -> assert false
     | `Malformed err -> failwith err
     | `Header (src_len, dst_len, _) -> Int.max size (Int.max src_len dst_len)
-    | `Await decoder -> begin
-        match Cachet.next t.cache slice with
+    | `Await decoder ->
+        begin match Cachet.next t.cache slice with
         | None ->
             let decoder = Zh.M.src decoder Bstr.empty 0 0 in
             (go [@tailcall]) slice decoder
         | Some ({ payload; length; _ } as slice) ->
             let decoder = Zh.M.src decoder (payload :> Bstr.t) 0 length in
             (go [@tailcall]) slice decoder
-      end
+        end
   in
   let decoder = Zh.M.decoder ~o:t.tmp ~allocate:t.allocate `Manual in
   Log.debug (fun m -> m "load %08x" cursor);
@@ -1009,15 +1009,15 @@ let of_delta t kind blob ~depth ~cursor =
         Log.debug (fun m -> m "dst_len: %d" dst_len);
         let decoder = Zh.M.dst decoder payload 0 dst_len in
         (go [@tailcall]) slice blob decoder
-    | `Await decoder -> begin
-        match Cachet.next t.cache slice with
+    | `Await decoder ->
+        begin match Cachet.next t.cache slice with
         | None ->
             let decoder = Zh.M.src decoder Bstr.empty 0 0 in
             (go [@tailcall]) slice blob decoder
         | Some ({ payload; length; _ } as slice) ->
             let decoder = Zh.M.src decoder (payload :> Bstr.t) 0 length in
             (go [@tailcall]) slice blob decoder
-      end
+        end
   in
   Log.debug (fun m -> m "load %08x" cursor);
   match Cachet.load t.cache cursor with

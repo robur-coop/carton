@@ -122,12 +122,12 @@ module First_pass : sig
       Here's an example of how to propose an algorithm to Carton with Digestif:
 
       {[
-        let sha1 =
-          let open Digestif.SHA1 in
-          let feed bstr ctx = feed_bigstring ctx bstr in
-          { feed; serialize= get; length= digest_size }
+      let sha1 =
+        let open Digestif.SHA1 in
+        let feed bstr ctx = feed_bigstring ctx bstr in
+        { feed; serialize= get; length= digest_size }
 
-        let sha1 = Digest (sha1, Digestif.SHA1.empty)
+      let sha1 = Digest (sha1, Digestif.SHA1.empty)
       ]} *)
 
   type digest = Digest : 'ctx hash * 'ctx -> digest
@@ -145,26 +145,26 @@ module First_pass : sig
       Here's an example of how to calculate the identifier of a Git object:
 
       {[
-        let identify =
-          let open Digestif in
-          let kind_to_string = function
-            | `A -> "commit"
-            | `B -> "tree"
-            | `C -> "blob"
-            | `D -> "tag"
+      let identify =
+        let open Digestif in
+        let kind_to_string = function
+          | `A -> "commit"
+          | `B -> "tree"
+          | `C -> "blob"
+          | `D -> "tag"
+        in
+        let init kind (len : Carton.Size.t) =
+          let hdr =
+            Format.kasprintf "%s %d\000" (kind_to_string kind) (len :> int)
           in
-          let init kind (len : Carton.Size.t) =
-            let hdr =
-              Format.kasprintf "%s %d\000" (kind_to_string kind) (len :> int)
-            in
-            let ctx = SHA1.empty in
-            SHA1.feed_string ctx hdr
-          in
-          let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
-          let serialize ctx =
-            SHA1.get ctx |> SHA1.to_raw_string |> Carton.Uid.unsafe_of_string
-          in
-          { Carton.First_pass.init; feed; serialize }
+          let ctx = SHA1.empty in
+          SHA1.feed_string ctx hdr
+        in
+        let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
+        let serialize ctx =
+          SHA1.get ctx |> SHA1.to_raw_string |> Carton.Uid.unsafe_of_string
+        in
+        { Carton.First_pass.init; feed; serialize }
       ]} *)
 
   (** Type of PACK entries.
@@ -352,10 +352,10 @@ end
     {!module:Classeur}).
 
     {[
-      let t = Carton.make ~map ~z ~allocate ~ref_length in
-      let size = Carton.size_of_offset t ~cursor in
-      let blob = Carton.Blob.make ~size in
-      Carton.of_offset t blob ~cursor
+    let t = Carton.make ~map ~z ~allocate ~ref_length in
+    let size = Carton.size_of_offset t ~cursor in
+    let blob = Carton.Blob.make ~size in
+    Carton.of_offset t blob ~cursor
     ]} *)
 
 type 'fd t
