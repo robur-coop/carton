@@ -81,8 +81,8 @@ let run _ digest (_filename, seq) =
     match Seq.uncons seq with
     | Some (`Number _, seq) -> go ctx seq
     | Some (`Inflate (None, _), seq) -> go ctx seq
-    | Some (`Inflate (Some (kind, size), str), seq) -> begin
-        match ctx with
+    | Some (`Inflate (Some (kind, size), str), seq) ->
+        begin match ctx with
         | None ->
             let ctx = empty (kind, size) in
             let ctx = SHA1.feed_string ctx str in
@@ -90,7 +90,7 @@ let run _ digest (_filename, seq) =
         | Some ctx ->
             let ctx = SHA1.feed_string ctx str in
             go (Some ctx) seq
-      end
+        end
     | Some (`Entry entry, seq) ->
         let offset = entry.Carton.First_pass.offset in
         let kind = entry.Carton.First_pass.kind in

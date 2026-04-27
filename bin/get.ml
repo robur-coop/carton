@@ -117,14 +117,14 @@ let run quiet hxd format_of_output (output_filename, output) without_metadata
   let cache = Carton.cache t in
   if (not without_metadata) && not quiet then
     show_metadata Fmt.stdout (cache, path, value);
-  if not quiet then begin
-    match (output_filename, format_of_output) with
+  if not quiet then
+    begin match (output_filename, format_of_output) with
     | _, Some `Hex | None, None ->
         Fmt.pf output "@[<hov>%a@]%!" (Hxd_string.pp hxd) str;
         if Option.is_some output_filename then Fmt.pf output "\n%!";
         Ok ()
     | _, Some `Raw | Some _, None -> Fmt.pf output "%s%!" str; Ok ()
-  end
+    end
   else Ok ()
 
 open Cmdliner

@@ -284,18 +284,18 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   in
   let new_child ~parent child =
     match parent with
-    | `Ofs parent -> begin
-        match Hashtbl.find_opt children_by_offset parent with
+    | `Ofs parent ->
+        begin match Hashtbl.find_opt children_by_offset parent with
         | None -> Hashtbl.add children_by_offset parent [ child ]
         | Some offsets ->
             Hashtbl.replace children_by_offset parent (child :: offsets)
-      end
-    | `Ref parent -> begin
-        match Hashtbl.find_opt children_by_uid parent with
+        end
+    | `Ref parent ->
+        begin match Hashtbl.find_opt children_by_uid parent with
         | None -> Hashtbl.add children_by_uid parent [ child ]
         | Some offsets ->
             Hashtbl.replace children_by_uid parent (child :: offsets)
-      end
+        end
   in
   let number_of_objects = ref 0 in
   let (Carton.Identify i) = identify in
@@ -645,13 +645,13 @@ let to_pack ?with_header ?with_signature ?cursor ?level ~load targets () =
   and consume ctx cursor : _ Lwt_seq.t =
    fun () ->
     Lwt_stream.get targets >>= function
-    | None -> begin
-        match ctx.signature with
+    | None ->
+        begin match ctx.signature with
         | Some Carton.First_pass.(Digest ({ serialize; _ }, ctx)) ->
             let signature = serialize ctx in
             Lwt.return (Lwt_seq.Cons (signature, Lwt_seq.empty))
         | None -> Lwt.return Lwt_seq.Nil
-      end
+        end
     | Some entry ->
         let uid = Cartonnage.Target.uid entry
         and meta = Cartonnage.Target.meta entry in

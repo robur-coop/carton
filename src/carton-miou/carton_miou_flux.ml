@@ -131,18 +131,18 @@ let oracle ~identify =
   in
   let new_child (Oracle t) ~parent child =
     match parent with
-    | `Ofs parent -> begin
-        match Hashtbl.find_opt t.children_by_offset parent with
+    | `Ofs parent ->
+        begin match Hashtbl.find_opt t.children_by_offset parent with
         | None -> Hashtbl.add t.children_by_offset parent [ child ]
         | Some offsets ->
             Hashtbl.replace t.children_by_offset parent (child :: offsets)
-      end
-    | `Ref parent -> begin
-        match Hashtbl.find_opt t.children_by_uid parent with
+        end
+    | `Ref parent ->
+        begin match Hashtbl.find_opt t.children_by_uid parent with
         | None -> Hashtbl.add t.children_by_uid parent [ child ]
         | Some offsets ->
             Hashtbl.replace t.children_by_uid parent (child :: offsets)
-      end
+        end
   in
   let init () =
     let children_by_offset = Hashtbl.create 0x7ff in

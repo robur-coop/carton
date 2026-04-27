@@ -54,17 +54,17 @@ let entries_from_ic ~identify ~put ~finally ic =
   let rec go () =
     match input_line ic with
     | exception End_of_file -> put None
-    | line -> begin
-        match Astring.String.cuts ~sep:" " ~empty:false line with
+    | line ->
+        begin match Astring.String.cuts ~sep:" " ~empty:false line with
         | [ (("a" | "b" | "c" | "d") as kind); filename ]
-        | [ (("commit" | "tree" | "blob" | "tag") as kind); filename ] -> begin
-            try
+        | [ (("commit" | "tree" | "blob" | "tag") as kind); filename ] ->
+            begin try
               let entry = entry_of_filename ~identify ~kind filename in
               put (Some entry); go ()
             with exn -> put None; reraise exn
-          end
+            end
         | _ -> put None; raise (Invalid_entry line)
-      end
+        end
   in
   Fun.protect ~finally go
 
