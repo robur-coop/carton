@@ -921,3 +921,375 @@ let merge :
     Carton.of_uid t blob ~uid
   in
   to_pack ~with_header ~with_signature:digest ?level ~load targets
+
+type classified =
+  | Classified_base of { uid: Carton.Uid.t; crc: Optint.t; kind: Carton.Kind.t }
+  | Classified_node of {
+        uid: Carton.Uid.t
+      ; crc: Optint.t
+      ; kind: Carton.Kind.t
+      ; depth: int
+      ; parent: Carton.Uid.t
+    }
+
+(* delete_in_place: truly modify a PACK in place by appending rewritten entries
+   and leaving old bytes as ghosts. *)
+
+let write_all fd bytes off len =
+  let rec go off len =
+    if len = 0 then ()
+    else
+      let n = Unix.single_write fd bytes off len in
+      if n = 0 then failwith "delete_in_place: short write"
+      else go (off + n) (len - n)
+  in
+  go off len
+
+let read_all fd bytes off len =
+  let rec go off len =
+    if len = 0 then ()
+    else
+      let n = Unix.read fd bytes off len in
+      if n = 0 then failwith "delete_in_place: short read"
+      else go (off + n) (len - n)
+  in
+  go off len
+
+let encode_tombstone_header buf ~pos size =
+  assert (size >= 0);
+  let c = ref (size land 15) in
+  let l = ref (size asr 4) in
+  let p = ref pos in
+  while !l <> 0 do
+    Bytes.set_uint8 buf !p (!c lor 0x80);
+    incr p;
+    c := !l land 0x7f;
+    l := !l asr 7
+  done;
+  Bytes.set_uint8 buf !p !c;
+  !p - pos + 1
+
+let zero_chunk = Bytes.make 0x1000 '\000'
+
+let write_tombstone fd ~cursor ~size =
+  let hdr = Bytes.create 10 in
+  let h = encode_tombstone_header hdr ~pos:0 size in
+  assert (h <= size);
+  let _ = Unix.lseek fd cursor Unix.SEEK_SET in
+  write_all fd hdr 0 h;
+  let remaining = ref (size - h) in
+  while !remaining > 0 do
+    let n = Int.min !remaining (Bytes.length zero_chunk) in
+    write_all fd zero_chunk 0 n;
+    remaining := !remaining - n
+  done
+
+let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
+  let pagesize = cfg.pagesize in
+  let cachesize = cfg.cachesize in
+  let ref_length = cfg.ref_length in
+  let z = Bstr.create De.io_buffer_size in
+  let t = make ?pagesize ?cachesize ~z ~ref_length pack in
+  let raw_bytes = Hashtbl.create 0x7ff in
+  let consumed_of_cursor = Hashtbl.create 0x7ff in
+  let on_entry ~max:_ entry =
+    let cursor = entry.offset and consumed = entry.consumed in
+    let bstr = Carton.map t ~cursor ~consumed in
+    Hashtbl.add raw_bytes cursor bstr;
+    Hashtbl.add consumed_of_cursor cursor consumed
+  in
+  let seq = seq_of_filename pack in
+  let seq =
+    let window = De.make_window ~bits:15 in
+    let allocate _bits = window in
+    Carton.First_pass.of_seq ~output:z ~allocate ~ref_length ~digest seq
+  in
+  let (Carton.First_pass.Digest ({ length= digest_length; _ }, _)) = digest in
+  let oracle =
+    compile_on_seq ~on:on_entry ~identify:cfg.identify ~digest_length seq
+  in
+  let matrix =
+    Array.init oracle.Carton.number_of_objects @@ fun pos ->
+    match oracle.is_base ~pos with
+    | Some cursor -> Carton.Unresolved_base { cursor }
+    | None -> Unresolved_node { cursor= oracle.Carton.cursor ~pos }
+  in
+  let sizes = Hashtbl.create 0x7ff in
+  let on_object ~cursor:_ value uid =
+    Hashtbl.add sizes uid (Carton.Value.length value)
+  in
+  (* 1) verify the given PACK file *)
+  verify ?threads:cfg.threads ~on:on_object t oracle matrix;
+  let uid_to_cursor = Hashtbl.create 0x7ff in
+  let entry_of_cursor = Hashtbl.create 0x7ff in
+  let children_by_uid = Hashtbl.create 0x7ff in
+  Array.iter
+    (function
+      | Carton.Unresolved_base _ | Carton.Unresolved_node _ -> assert false
+      | Carton.Resolved_base { cursor; uid; crc; kind } ->
+          Hashtbl.add uid_to_cursor uid cursor;
+          let c = Classified_base { uid; crc; kind } in
+          Hashtbl.add entry_of_cursor cursor c
+      | Carton.Resolved_node { cursor; uid; crc; kind; depth; parent } ->
+          Hashtbl.add uid_to_cursor uid cursor;
+          let c = Classified_node { uid; crc; kind; depth; parent } in
+          Hashtbl.add entry_of_cursor cursor c;
+          let prev = Hashtbl.find_opt children_by_uid parent in
+          let prev = Option.value ~default:[] prev in
+          Hashtbl.replace children_by_uid parent (cursor :: prev))
+    matrix;
+  List.iter
+    (fun uid ->
+      if not (Hashtbl.mem uid_to_cursor uid) then
+        failwithf "Object %a not found in source PACK" Carton.Uid.pp uid)
+    uids_to_delete;
+  let deleted_set = Hashtbl.create (List.length uids_to_delete) in
+  List.iter (fun uid -> Hashtbl.replace deleted_set uid ()) uids_to_delete;
+  (* 2) collect objects to delete and objects to rewrite *)
+  let promoted = Hashtbl.create 0x7ff in
+  let affected = Hashtbl.create 0x7ff in
+  let queue = Queue.create () in
+  List.iter (fun uid -> Queue.add (uid, true) queue) uids_to_delete;
+  while not (Queue.is_empty queue) do
+    let uid, is_direct = Queue.pop queue in
+    let children = Hashtbl.find_opt children_by_uid uid in
+    let children = Option.value ~default:[] children in
+    List.iter
+      (fun cursor ->
+        let child_uid =
+          match Hashtbl.find entry_of_cursor cursor with
+          | Classified_node { uid; _ } -> uid
+          | Classified_base _ -> assert false
+        in
+        if is_direct then Hashtbl.replace promoted cursor ();
+        Hashtbl.replace affected cursor ();
+        Queue.add (child_uid, false) queue)
+      children
+  done;
+  let cursors_ordered =
+    let arr =
+      Array.init oracle.Carton.number_of_objects (fun pos ->
+          match matrix.(pos) with
+          | Carton.Resolved_base { cursor; _ } | Resolved_node { cursor; _ } ->
+              cursor
+          | _ -> assert false)
+    in
+    Array.sort Int.compare arr; arr
+  in
+  let t_with_index =
+    let fn uid = Carton.Local (Hashtbl.find uid_to_cursor uid) in
+    Carton.with_index t fn
+  in
+  let promoted_values = Hashtbl.create 0x7ff in
+  let rewired_raw = Hashtbl.create 0x7ff in
+  Array.iter
+    (fun cursor ->
+      let uid =
+        match Hashtbl.find entry_of_cursor cursor with
+        | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
+      in
+      if Hashtbl.mem deleted_set uid then ()
+      else if Hashtbl.mem promoted cursor then begin
+        let size = Carton.size_of_uid t_with_index ~uid Carton.Size.zero in
+        let blob = Carton.Blob.make ~size in
+        let value = Carton.of_uid t_with_index blob ~uid in
+        Hashtbl.add promoted_values cursor value
+      end
+      else if Hashtbl.mem affected cursor then begin
+        let raw = Hashtbl.find raw_bytes cursor in
+        let src = (raw :> Bstr.t) in
+        let len = Bstr.length src in
+        let copy = Bstr.create len in
+        Bstr.blit src ~src_off:0 copy ~dst_off:0 ~len;
+        Hashtbl.add rewired_raw cursor copy
+      end)
+    cursors_ordered;
+  let fd_t, file_size = Carton.fd t in
+  Unix.close fd_t;
+  let trailer_offset = file_size - digest_length in
+  let fd = Unix.openfile (Fpath.to_string pack) [ Unix.O_RDWR ] 0o644 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  Unix.ftruncate fd trailer_offset;
+  (* 3) set number of objects. *)
+  let n_affected = Hashtbl.length affected in
+  let old_count =
+    let buf = Bytes.create 4 in
+    let _ = Unix.lseek fd 8 Unix.SEEK_SET in
+    read_all fd buf 0 4;
+    Int32.to_int (Bytes.get_int32_be buf 0)
+  in
+  let new_count = old_count + n_affected in
+  let hdr_buf = Bytes.create 4 in
+  Bytes.set_int32_be hdr_buf 0 (Int32.of_int new_count);
+  let _ = Unix.lseek fd 8 Unix.SEEK_SET in
+  write_all fd hdr_buf 0 4;
+  let _ = Unix.lseek fd trailer_offset Unix.SEEK_SET in
+  let where_tbl = Hashtbl.create 0x7ff in
+  Array.iter
+    (fun cursor ->
+      let uid =
+        match Hashtbl.find entry_of_cursor cursor with
+        | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
+      in
+      if
+        (not (Hashtbl.mem deleted_set uid)) && not (Hashtbl.mem affected cursor)
+      then Hashtbl.add where_tbl uid cursor)
+    cursors_ordered;
+  let buffers =
+    let o = Bstr.create 0x1000
+    and i = Bstr.create 0x1000
+    and q = De.Queue.create 0x1000
+    and w = De.Lz77.make_window ~bits:15 in
+    Cartonnage.{ o; i; q; w }
+  in
+  let out_bytes = Bytes.create 0x1000 in
+  let new_entries = ref [] in
+  let current_cursor = ref trailer_offset in
+  (* 4) re-encode entries which depends on deleted objects. *)
+  Array.iter
+    (fun cursor ->
+      if Hashtbl.mem affected cursor then begin
+        let uid, kind =
+          match Hashtbl.find entry_of_cursor cursor with
+          | Classified_base { uid; kind; _ } | Classified_node { uid; kind; _ }
+            ->
+              (uid, kind)
+        in
+        if Hashtbl.mem deleted_set uid then ()
+        else begin
+          let length = Hashtbl.find sizes uid in
+          let is_promoted = Hashtbl.mem promoted cursor in
+          let entry, value =
+            if is_promoted then begin
+              let value = Hashtbl.find promoted_values cursor in
+              let e = Cartonnage.Entry.make ~kind uid ~length () in
+              (Cartonnage.Target.make e, value)
+            end
+            else begin
+              let raw = Hashtbl.find rewired_raw cursor in
+              let depth, parent =
+                match Hashtbl.find entry_of_cursor cursor with
+                | Classified_node { depth; parent; _ } -> (depth, parent)
+                | Classified_base _ -> assert false
+              in
+              let patch = Cartonnage.Patch.of_copy ~depth ~source:parent raw in
+              let e = Cartonnage.Entry.make ~kind uid ~length () in
+              let dummy = Carton.Value.make ~kind (Bstr.create 0) in
+              (Cartonnage.Target.make ~patch e, dummy)
+            end
+          in
+          let entry_cursor = !current_cursor in
+          let _hdr, encoder0 =
+            Cartonnage.encode ?level ~buffers
+              ~where:(Hashtbl.find_opt where_tbl)
+              entry ~target:value ~cursor:entry_cursor
+          in
+          let encoder = ref encoder0 in
+          let total_len = ref 0 in
+          let crc = ref Checkseum.Crc32.default in
+          let continue = ref true in
+          while !continue do
+            match
+              Cartonnage.Encoder.encode ~o:buffers.Cartonnage.o !encoder
+            with
+            | `Flush (enc, len) ->
+                let chunk_len = len in
+                Bstr.blit_to_bytes buffers.Cartonnage.o ~src_off:0 out_bytes
+                  ~dst_off:0 ~len:chunk_len;
+                write_all fd out_bytes 0 chunk_len;
+                crc := Checkseum.Crc32.digest_bytes out_bytes 0 chunk_len !crc;
+                total_len := !total_len + chunk_len;
+                encoder :=
+                  Cartonnage.Encoder.dst enc buffers.Cartonnage.o 0
+                    (Bstr.length buffers.Cartonnage.o)
+            | `End -> continue := false
+          done;
+          Hashtbl.add where_tbl uid entry_cursor;
+          new_entries := (uid, !crc, entry_cursor) :: !new_entries;
+          current_cursor := !current_cursor + !total_len
+        end
+      end)
+    cursors_ordered;
+  let final_end = !current_cursor in
+  (* 5) zero deleted objects. *)
+  let zero_cursor cursor =
+    let consumed = Hashtbl.find consumed_of_cursor cursor in
+    write_tombstone fd ~cursor ~size:consumed
+  in
+  List.iter
+    (fun uid -> zero_cursor (Hashtbl.find uid_to_cursor uid))
+    uids_to_delete;
+  Hashtbl.iter (fun cursor () -> zero_cursor cursor) affected;
+  (* 6) re-compute hash. *)
+  let hash_ctx =
+    let (Carton.First_pass.Digest (hash, ctx)) = digest in
+    let _ = Unix.lseek fd 0 Unix.SEEK_SET in
+    let buf = Bytes.create 0x8000 in
+    let ctx = ref ctx in
+    let remaining = ref final_end in
+    while !remaining > 0 do
+      let to_read = Int.min (Bytes.length buf) !remaining in
+      read_all fd buf 0 to_read;
+      ctx := hash.feed_bytes buf ~off:0 ~len:to_read !ctx;
+      remaining := !remaining - to_read
+    done;
+    Carton.First_pass.Digest (hash, !ctx)
+  in
+  let new_pack_hash =
+    let (Carton.First_pass.Digest ({ serialize; _ }, ctx)) = hash_ctx in
+    serialize ctx
+  in
+  let _ = Unix.lseek fd final_end Unix.SEEK_SET in
+  let trailer = Bytes.of_string new_pack_hash in
+  write_all fd trailer 0 (Bytes.length trailer);
+  (* 7) rewrite new *.idx file. *)
+  let idx_entries =
+    let carried =
+      Array.fold_left
+        (fun acc cursor ->
+          let uid =
+            match Hashtbl.find entry_of_cursor cursor with
+            | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
+          in
+          if Hashtbl.mem deleted_set uid || Hashtbl.mem affected cursor then acc
+          else
+            let crc =
+              match Hashtbl.find entry_of_cursor cursor with
+              | Classified_base { crc; _ } | Classified_node { crc; _ } -> crc
+            in
+            let uid = Classeur.unsafe_uid_of_string (uid :> string) in
+            Classeur.Encoder.{ uid; crc; offset= Int64.of_int cursor } :: acc)
+        [] cursors_ordered
+    in
+    let news =
+      List.map
+        (fun (uid, crc, cursor) ->
+          let uid =
+            Classeur.unsafe_uid_of_string ((uid : Carton.Uid.t) :> string)
+          in
+          Classeur.Encoder.{ uid; crc; offset= Int64.of_int cursor })
+        !new_entries
+    in
+    Array.of_list (carried @ news)
+  in
+  let idx_path = Fpath.set_ext ".idx" pack in
+  let idx_oc = open_out (Fpath.to_string idx_path) in
+  Fun.protect ~finally:(fun () -> close_out idx_oc) @@ fun () ->
+  let encoder =
+    Classeur.Encoder.encoder `Manual ~digest ~pack:new_pack_hash ~ref_length
+      idx_entries
+  in
+  let out = Bytes.create 0x7ff in
+  let rec go (`Await as await) =
+    match Classeur.Encoder.encode encoder await with
+    | `Ok ->
+        let len = Bytes.length out - Classeur.Encoder.dst_rem encoder in
+        output_substring idx_oc (Bytes.unsafe_to_string out) 0 len
+    | `Partial ->
+        let len = Bytes.length out - Classeur.Encoder.dst_rem encoder in
+        output_substring idx_oc (Bytes.unsafe_to_string out) 0 len;
+        Classeur.Encoder.dst encoder out 0 (Bytes.length out);
+        go await
+  in
+  Classeur.Encoder.dst encoder out 0 (Bytes.length out);
+  go `Await

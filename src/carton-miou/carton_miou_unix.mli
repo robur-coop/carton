@@ -113,3 +113,21 @@ val merge :
   -> ?level:int
   -> Fpath.t list
   -> string Seq.t
+
+val delete_in_place :
+     cfg:config
+  -> digest:Carton.First_pass.digest
+  -> pack:Fpath.t
+  -> ?level:int
+  -> Carton.Uid.t list
+  -> unit
+(** [delete_in_place ~cfg ~digest ~pack uids] modifies the PACK file [pack] in
+    place (along with its IDX at [Fpath.set_ext ".idx" pack]). Entries whose UID
+    is in [uids], together with the old versions of their transitive
+    delta-descendants, become {i ghost entries}: their bytes remain in the file
+    (so the PACK stays structurally parseable) but they are no longer referenced
+    by the IDX. Fresh copies of every descendant are appended at the end of the
+    PACK (direct children as bases, deeper descendants as carbon-copied deltas
+    with recomputed ofs-delta headers). The header object count, trailer hash
+    and IDX are updated accordingly. This operation does {b not} reclaim disk
+    space for the removed/replaced entries. *)
