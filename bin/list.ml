@@ -33,6 +33,7 @@ let pp_kind ?uid ~offset ppf = function
   | Ofs { sub; _ } ->
       Fmt.pf ppf "%a" Fmt.(styled `Red pp_ofs_delta) (offset - sub)
   | Ref { ptr; _ } -> Fmt.pf ppf "%a" Fmt.(styled `Yellow pp_ref_delta) ptr
+  | Tombstone -> Fmt.pf ppf "%a" Fmt.(styled `Faint string) "tombstone"
 
 let pp_bytes ppf = function
   | (0 | 1) as value -> Fmt.pf ppf "%d byte" value
