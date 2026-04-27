@@ -15,7 +15,7 @@ Delete a leaf
   $ diff bomb.commit leaf.commit
   $ carton list leaf.pack | grep -c tombstone
   1
-  $ carton verify leaf.pack | wc -l
+  $ carton verify leaf.pack | ocaml wc.ml
   17
 
 Delete a base
@@ -33,7 +33,7 @@ Delete a base
 
   $ carton list base.pack | grep -c tombstone
   3
-  $ carton verify base.pack | wc -l
+  $ carton verify base.pack | ocaml wc.ml
   17
 
 Delete multiple objects
@@ -52,5 +52,5 @@ Delete multiple objects
 
   $ carton list chain.pack | grep -c tombstone
   5
-  $ carton verify chain.pack | wc -l
+  $ carton verify chain.pack | ocaml wc.ml
   16
