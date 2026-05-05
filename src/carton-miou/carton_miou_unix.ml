@@ -982,6 +982,80 @@ let write_tombstone fd ~cursor ~size =
     remaining := !remaining - n
   done
 
+type metadata = {
+    children_by_uid: (Carton.Uid.t, int list) Hashtbl.t
+  ; entries: (int, classified) Hashtbl.t
+  ; uid_to_cursor: (Carton.Uid.t, int) Hashtbl.t
+  ; raw_bytes: (int, Cachet.Bstr.t) Hashtbl.t
+  ; cursors: int array
+}
+
+let cursors_of_matrix ~oracle matrix =
+  let arr =
+    let fn pos =
+      match matrix.(pos) with
+      | Carton.Resolved_base { cursor; _ } | Resolved_node { cursor; _ } ->
+          cursor
+      | _ -> assert false
+    in
+    Array.init oracle.Carton.number_of_objects fn
+  in
+  Array.sort Int.compare arr; arr
+
+let diff { children_by_uid; entries; uid_to_cursor; raw_bytes; cursors }
+    uids_to_delete t =
+  let deleted_set = Hashtbl.create (List.length uids_to_delete) in
+  List.iter (fun uid -> Hashtbl.replace deleted_set uid ()) uids_to_delete;
+  let promoted = Hashtbl.create 0x7ff in
+  let affected = Hashtbl.create 0x7ff in
+  let queue = Queue.create () in
+  List.iter (fun uid -> Queue.add (uid, true) queue) uids_to_delete;
+  while not (Queue.is_empty queue) do
+    let uid, is_direct = Queue.pop queue in
+    let children = Hashtbl.find_opt children_by_uid uid in
+    let children = Option.value ~default:[] children in
+    List.iter
+      (fun cursor ->
+        let child_uid =
+          match Hashtbl.find entries cursor with
+          | Classified_node { uid; _ } -> uid
+          | Classified_base _ -> assert false
+        in
+        if is_direct then Hashtbl.replace promoted cursor ();
+        Hashtbl.replace affected cursor ();
+        Queue.add (child_uid, false) queue)
+      children
+  done;
+  let t_with_index =
+    let fn uid = Carton.Local (Hashtbl.find uid_to_cursor uid) in
+    Carton.with_index t fn
+  in
+  let promoted_values = Hashtbl.create 0x7ff in
+  let rewired_raw = Hashtbl.create 0x7ff in
+  Array.iter
+    (fun cursor ->
+      let uid =
+        match Hashtbl.find entries cursor with
+        | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
+      in
+      if Hashtbl.mem deleted_set uid then ()
+      else if Hashtbl.mem promoted cursor then begin
+        let size = Carton.size_of_uid t_with_index ~uid Carton.Size.zero in
+        let blob = Carton.Blob.make ~size in
+        let value = Carton.of_uid t_with_index blob ~uid in
+        Hashtbl.add promoted_values cursor value
+      end
+      else if Hashtbl.mem affected cursor then begin
+        let raw = Hashtbl.find raw_bytes cursor in
+        let src = (raw :> Bstr.t) in
+        let len = Bstr.length src in
+        let copy = Bstr.create len in
+        Bstr.blit src ~src_off:0 copy ~dst_off:0 ~len;
+        Hashtbl.add rewired_raw cursor copy
+      end)
+    cursors;
+  (promoted_values, rewired_raw, affected, promoted)
+
 let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   let pagesize = cfg.pagesize in
   let cachesize = cfg.cachesize in
@@ -1019,7 +1093,7 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   (* 1) verify the given PACK file *)
   verify ?threads:cfg.threads ~on:on_object t oracle matrix;
   let uid_to_cursor = Hashtbl.create 0x7ff in
-  let entry_of_cursor = Hashtbl.create 0x7ff in
+  let entries = Hashtbl.create 0x7ff in
   let children_by_uid = Hashtbl.create 0x7ff in
   Array.iter
     (function
@@ -1027,11 +1101,11 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
       | Carton.Resolved_base { cursor; uid; crc; kind } ->
           Hashtbl.add uid_to_cursor uid cursor;
           let c = Classified_base { uid; crc; kind } in
-          Hashtbl.add entry_of_cursor cursor c
+          Hashtbl.add entries cursor c
       | Carton.Resolved_node { cursor; uid; crc; kind; depth; parent } ->
           Hashtbl.add uid_to_cursor uid cursor;
           let c = Classified_node { uid; crc; kind; depth; parent } in
-          Hashtbl.add entry_of_cursor cursor c;
+          Hashtbl.add entries cursor c;
           let prev = Hashtbl.find_opt children_by_uid parent in
           let prev = Option.value ~default:[] prev in
           Hashtbl.replace children_by_uid parent (cursor :: prev))
@@ -1044,64 +1118,14 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   let deleted_set = Hashtbl.create (List.length uids_to_delete) in
   List.iter (fun uid -> Hashtbl.replace deleted_set uid ()) uids_to_delete;
   (* 2) collect objects to delete and objects to rewrite *)
-  let promoted = Hashtbl.create 0x7ff in
-  let affected = Hashtbl.create 0x7ff in
-  let queue = Queue.create () in
-  List.iter (fun uid -> Queue.add (uid, true) queue) uids_to_delete;
-  while not (Queue.is_empty queue) do
-    let uid, is_direct = Queue.pop queue in
-    let children = Hashtbl.find_opt children_by_uid uid in
-    let children = Option.value ~default:[] children in
-    List.iter
-      (fun cursor ->
-        let child_uid =
-          match Hashtbl.find entry_of_cursor cursor with
-          | Classified_node { uid; _ } -> uid
-          | Classified_base _ -> assert false
-        in
-        if is_direct then Hashtbl.replace promoted cursor ();
-        Hashtbl.replace affected cursor ();
-        Queue.add (child_uid, false) queue)
-      children
-  done;
-  let cursors_ordered =
-    let arr =
-      Array.init oracle.Carton.number_of_objects (fun pos ->
-          match matrix.(pos) with
-          | Carton.Resolved_base { cursor; _ } | Resolved_node { cursor; _ } ->
-              cursor
-          | _ -> assert false)
-    in
-    Array.sort Int.compare arr; arr
+  let cursors = cursors_of_matrix ~oracle matrix in
+  let metadata =
+    { children_by_uid; entries; uid_to_cursor; raw_bytes; cursors }
   in
-  let t_with_index =
-    let fn uid = Carton.Local (Hashtbl.find uid_to_cursor uid) in
-    Carton.with_index t fn
+  let promoted_values, rewired_raw, affected, promoted =
+    diff metadata uids_to_delete t
   in
-  let promoted_values = Hashtbl.create 0x7ff in
-  let rewired_raw = Hashtbl.create 0x7ff in
-  Array.iter
-    (fun cursor ->
-      let uid =
-        match Hashtbl.find entry_of_cursor cursor with
-        | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
-      in
-      if Hashtbl.mem deleted_set uid then ()
-      else if Hashtbl.mem promoted cursor then begin
-        let size = Carton.size_of_uid t_with_index ~uid Carton.Size.zero in
-        let blob = Carton.Blob.make ~size in
-        let value = Carton.of_uid t_with_index blob ~uid in
-        Hashtbl.add promoted_values cursor value
-      end
-      else if Hashtbl.mem affected cursor then begin
-        let raw = Hashtbl.find raw_bytes cursor in
-        let src = (raw :> Bstr.t) in
-        let len = Bstr.length src in
-        let copy = Bstr.create len in
-        Bstr.blit src ~src_off:0 copy ~dst_off:0 ~len;
-        Hashtbl.add rewired_raw cursor copy
-      end)
-    cursors_ordered;
+  let n_affected = Hashtbl.length affected in
   let fd_t, file_size = Carton.fd t in
   Unix.close fd_t;
   let trailer_offset = file_size - digest_length in
@@ -1109,7 +1133,6 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
   Unix.ftruncate fd trailer_offset;
   (* 3) set number of objects. *)
-  let n_affected = Hashtbl.length affected in
   let old_count =
     let buf = Bytes.create 4 in
     let _ = Unix.lseek fd 8 Unix.SEEK_SET in
@@ -1126,13 +1149,13 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   Array.iter
     (fun cursor ->
       let uid =
-        match Hashtbl.find entry_of_cursor cursor with
+        match Hashtbl.find entries cursor with
         | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
       in
       if
         (not (Hashtbl.mem deleted_set uid)) && not (Hashtbl.mem affected cursor)
       then Hashtbl.add where_tbl uid cursor)
-    cursors_ordered;
+    cursors;
   let buffers =
     let o = Bstr.create 0x1000
     and i = Bstr.create 0x1000
@@ -1148,7 +1171,7 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
     (fun cursor ->
       if Hashtbl.mem affected cursor then begin
         let uid, kind =
-          match Hashtbl.find entry_of_cursor cursor with
+          match Hashtbl.find entries cursor with
           | Classified_base { uid; kind; _ } | Classified_node { uid; kind; _ }
             ->
               (uid, kind)
@@ -1166,7 +1189,7 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
             else begin
               let raw = Hashtbl.find rewired_raw cursor in
               let depth, parent =
-                match Hashtbl.find entry_of_cursor cursor with
+                match Hashtbl.find entries cursor with
                 | Classified_node { depth; parent; _ } -> (depth, parent)
                 | Classified_base _ -> assert false
               in
@@ -1207,7 +1230,7 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
           current_cursor := !current_cursor + !total_len
         end
       end)
-    cursors_ordered;
+    cursors;
   let final_end = !current_cursor in
   (* 5) zero deleted objects. *)
   let zero_cursor cursor =
@@ -1239,55 +1262,4 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   in
   let _ = Unix.lseek fd final_end Unix.SEEK_SET in
   let trailer = Bytes.of_string new_pack_hash in
-  write_all fd trailer 0 (Bytes.length trailer);
-  (* 7) rewrite new *.idx file. *)
-  let idx_entries =
-    let carried =
-      Array.fold_left
-        (fun acc cursor ->
-          let uid =
-            match Hashtbl.find entry_of_cursor cursor with
-            | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
-          in
-          if Hashtbl.mem deleted_set uid || Hashtbl.mem affected cursor then acc
-          else
-            let crc =
-              match Hashtbl.find entry_of_cursor cursor with
-              | Classified_base { crc; _ } | Classified_node { crc; _ } -> crc
-            in
-            let uid = Classeur.unsafe_uid_of_string (uid :> string) in
-            Classeur.Encoder.{ uid; crc; offset= Int64.of_int cursor } :: acc)
-        [] cursors_ordered
-    in
-    let news =
-      List.map
-        (fun (uid, crc, cursor) ->
-          let uid =
-            Classeur.unsafe_uid_of_string ((uid : Carton.Uid.t) :> string)
-          in
-          Classeur.Encoder.{ uid; crc; offset= Int64.of_int cursor })
-        !new_entries
-    in
-    Array.of_list (carried @ news)
-  in
-  let idx_path = Fpath.set_ext ".idx" pack in
-  let idx_oc = open_out (Fpath.to_string idx_path) in
-  Fun.protect ~finally:(fun () -> close_out idx_oc) @@ fun () ->
-  let encoder =
-    Classeur.Encoder.encoder `Manual ~digest ~pack:new_pack_hash ~ref_length
-      idx_entries
-  in
-  let out = Bytes.create 0x7ff in
-  let rec go (`Await as await) =
-    match Classeur.Encoder.encode encoder await with
-    | `Ok ->
-        let len = Bytes.length out - Classeur.Encoder.dst_rem encoder in
-        output_substring idx_oc (Bytes.unsafe_to_string out) 0 len
-    | `Partial ->
-        let len = Bytes.length out - Classeur.Encoder.dst_rem encoder in
-        output_substring idx_oc (Bytes.unsafe_to_string out) 0 len;
-        Classeur.Encoder.dst encoder out 0 (Bytes.length out);
-        go await
-  in
-  Classeur.Encoder.dst encoder out 0 (Bytes.length out);
-  go `Await
+  write_all fd trailer 0 (Bytes.length trailer)

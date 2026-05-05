@@ -24,6 +24,8 @@ Delete a base
   $ carton get -q base.idx 106d3b1c00034193bbe91194eb8a90fc45006377 -o missing > /dev/null 2>&1 || echo "not found"
   not found
 
+  $ rm base.idx
+  $ carton index base.pack -o base.idx
   $ carton get -q base.idx c1971b07ce6888558e2178a121804774c4201b17 -o base.c1971b
   $ carton get -q bomb.idx c1971b07ce6888558e2178a121804774c4201b17 -o bomb.c1971b
   $ diff bomb.c1971b base.c1971b
@@ -46,6 +48,8 @@ Delete multiple objects
   not found
   $ carton get -q chain.idx 7af99c9e7d4768fa681f4fe4ff61259794cf719b -o chain.commit
   $ diff bomb.commit chain.commit
+  $ rm chain.idx
+  $ carton index chain.pack -o chain.idx
   $ carton get -q chain.idx ad839baae5fc207ac0db1534ba4819cbb4a34bb9 -o chain.ad839ba
   $ carton get -q bomb.idx ad839baae5fc207ac0db1534ba4819cbb4a34bb9 -o bomb.ad839ba
   $ diff bomb.ad839ba chain.ad839ba
