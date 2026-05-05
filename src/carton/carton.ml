@@ -70,6 +70,7 @@ module First_pass = struct
     | Base of Kind.t
     | Ofs of { sub: int; source: int; target: int }
     | Ref of { ptr: string; source: int; target: int }
+    | Tombstone
 
   let digest bstr ?(off = 0) ?len
       (Digest (({ feed_bigstring; _ } as hash), ctx)) =
@@ -108,7 +109,13 @@ module First_pass = struct
     ; k: decoder -> decode
   }
 
-  and state = Header | Entry_header | Inflate of entry | Entry of entry | Hash
+  and state =
+    | Header
+    | Entry_header
+    | Inflate of entry
+    | Skip of entry * int
+    | Entry of entry
+    | Hash
 
   and decode =
     [ `Await of decoder
@@ -360,7 +367,31 @@ module First_pass = struct
     let crc = crc_decoder decoder ~len crc in
     let decoder = digest_decoder decoder ~len in
     match kind with
-    | 0b000 | 0b101 -> malformedf "Carton.Dec.First_pass: invalid type"
+    | 0b000 ->
+        let offset = Int64.to_int decoder.consumed in
+        let entry =
+          {
+            offset
+          ; kind= Tombstone
+          ; size= !size
+          ; consumed= !size
+          ; crc
+          ; number= decoder.counter_of_objects
+          }
+        in
+        let skip = !size - len in
+        let decoder =
+          {
+            decoder with
+            input_pos= decoder.input_pos + len
+          ; consumed= decoder.consumed +! Int64.of_int len
+          ; counter_of_objects= succ decoder.counter_of_objects
+          ; state= (if skip = 0 then Entry entry else Skip (entry, skip))
+          ; k= decode
+          }
+        in
+        decode decoder
+    | 0b101 -> malformedf "Carton.Dec.First_pass: invalid type"
     | (0b001 | 0b010 | 0b011 | 0b100) as kind ->
         let decoder = { decoder with input_pos= decoder.input_pos + len } in
         let decoder = { decoder with zlib= Zl.Inf.reset decoder.zlib } in
@@ -479,6 +510,28 @@ module First_pass = struct
         if decoder.counter_of_objects == decoder.number_of_objects then
           `Entry (entry, { decoder with state= Hash })
         else `Entry (entry, { decoder with state= Entry_header })
+    | Skip (entry, remaining) ->
+        if remaining = 0 then
+          if decoder.counter_of_objects == decoder.number_of_objects then
+            `Entry (entry, { decoder with state= Hash })
+          else `Entry (entry, { decoder with state= Entry_header })
+        else
+          let available = src_rem decoder in
+          if available = 0 then
+            refill decode { decoder with state= Skip (entry, remaining) }
+          else
+            let n = Int.min remaining available in
+            let decoder = digest_decoder decoder ~len:n in
+            let decoder =
+              {
+                decoder with
+                input_pos= decoder.input_pos + n
+              ; consumed= decoder.consumed +! Int64.of_int n
+              ; state= Skip (entry, remaining - n)
+              }
+            in
+            decode decoder
+    | Inflate { kind= Tombstone; _ } -> assert false
     | Inflate ({ kind= Base _; crc; _ } as entry) -> begin
         Log.debug (fun m -> m "inflate base object");
         match Zl.Inf.decode decoder.zlib with

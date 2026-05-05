@@ -193,6 +193,11 @@ module First_pass : sig
     | Base of Kind.t
     | Ofs of { sub: int; source: Size.t; target: Size.t }
     | Ref of { ptr: Uid.t; source: Size.t; target: Size.t }
+    | Tombstone
+        (** A ghost entry introduced by an in-place deletion. Its [size] field
+            gives the total number of bytes the tombstone occupies in the PACK
+            file (type-length header plus trailing zero-padding). It carries no
+            decompressible payload. *)
 
   (** {2 A delta-object, an object which requires a source.}
 

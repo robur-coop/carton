@@ -298,6 +298,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         end
   in
   let number_of_objects = ref 0 in
+  let real_count = ref 0 in
   let (Carton.Identify i) = identify in
   let ctx = ref None in
   let fn = function
@@ -322,6 +323,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
             ctx := Some ctx0;
             Lwt.return_unit
       end
+    | `Entry { Carton.First_pass.kind= Tombstone; _ } -> Lwt.return_unit
     | `Entry entry -> begin
         let offset = entry.Carton.First_pass.offset in
         let size = entry.Carton.First_pass.size in
@@ -329,13 +331,15 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
         let crc = entry.Carton.First_pass.crc in
         on ~max:!number_of_objects { offset; crc; consumed; size:> int }
         >|= fun () ->
-        Hashtbl.add where offset entry.number;
-        Hashtbl.add cursors entry.number offset;
+        let pos = !real_count in
+        incr real_count;
+        Hashtbl.add where offset pos;
+        Hashtbl.add cursors pos offset;
         Hashtbl.add crcs offset crc;
         match entry.Carton.First_pass.kind with
         | Carton.First_pass.Base _ ->
             Hashtbl.add sizes offset (ref size);
-            Hashtbl.add is_base entry.number offset;
+            Hashtbl.add is_base pos offset;
             let uid = Option.get (Option.map i.serialize !ctx) in
             ctx := None;
             Log.debug (fun m ->
@@ -356,6 +360,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
             end;
             Hashtbl.add ref_index offset ptr;
             new_child ~parent:(`Ref ptr) offset
+        | Tombstone -> assert false
       end
   in
   Lwt_seq.iter_p fn seq >|= fun () ->
@@ -369,7 +374,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
           update_size ~parent offset !(Hashtbl.find sizes offset)
       | None -> ())
     ref_index;
-  Log.debug (fun m -> m "%d object(s)" !number_of_objects);
+  Log.debug (fun m -> m "%d object(s)" !real_count);
   let children ~cursor ~(uid : Carton.Uid.t) =
     match
       ( Hashtbl.find_opt children_by_offset cursor
@@ -394,7 +399,7 @@ let compile ?(on = ignorem) ~identify ~digest_length seq =
   ; size
   ; checksum
   ; is_base
-  ; number_of_objects= !number_of_objects
+  ; number_of_objects= !real_count
   ; hash= !hash
   }
 

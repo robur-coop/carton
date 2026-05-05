@@ -3,7 +3,7 @@
  (public_name carton)
  (package carton-miou)
  (enabled_if %{arch_sixtyfour})
- (modules apply diff explode get index list make merge pack verify)
+ (modules apply diff explode get index list make merge pack verify delete)
  (libraries cmdliner carton-miou.cli carton-miou.unix))
 
 (library

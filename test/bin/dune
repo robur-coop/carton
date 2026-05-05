@@ -1,4 +1,4 @@
 (cram
  (package carton-miou)
  (enabled_if %{arch_sixtyfour})
- (deps bomb.pack %{bin:carton}))
+ (deps wc.ml bomb.pack %{bin:carton}))

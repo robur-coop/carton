@@ -12,7 +12,7 @@ let () =
     Cmd.group ~default info
       [
         Apply.cmd; Diff.cmd; Explode.cmd; Get.cmd; Index.cmd; List.cmd; Make.cmd
-      ; Verify.cmd; Merge.cmd
+      ; Verify.cmd; Merge.cmd; Delete.cmd
       ]
   in
   Cmd.(exit @@ eval_result cmd)

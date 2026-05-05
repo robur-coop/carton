@@ -117,6 +117,7 @@ type _oracle =
       ; index: (uid, offset) Hashtbl.t
       ; ref_index: (offset, uid) Hashtbl.t
       ; mutable number_of_objects: int
+      ; mutable real_count: int
       ; mutable hash: string
       ; mutable ctx: 'ctx option
       ; identify: 'ctx Carton.First_pass.identify
@@ -155,6 +156,7 @@ let oracle ~identify =
     let index = Hashtbl.create 0x7ff in
     let ref_index = Hashtbl.create 0x7ff in
     let number_of_objects = 0 in
+    let real_count = 0 in
     let hash = String.empty in
     let ctx = None in
     Oracle
@@ -169,6 +171,7 @@ let oracle ~identify =
       ; index
       ; ref_index
       ; number_of_objects
+      ; real_count
       ; hash
       ; ctx
       ; identify
@@ -192,17 +195,20 @@ let oracle ~identify =
               let ctx0 = t.identify.feed (Bstr.of_string str) ctx0 in
               t.ctx <- Some ctx0
         end
+      | `Entry { Carton.First_pass.kind= Tombstone; _ } -> ()
       | `Entry entry -> begin
           let offset = entry.Carton.First_pass.offset in
           let size = entry.Carton.First_pass.size in
           let crc = entry.Carton.First_pass.crc in
-          Hashtbl.add t.where offset entry.number;
-          Hashtbl.add t.cursors entry.number offset;
+          let pos = t.real_count in
+          t.real_count <- t.real_count + 1;
+          Hashtbl.add t.where offset pos;
+          Hashtbl.add t.cursors pos offset;
           Hashtbl.add t.crcs offset crc;
           match entry.Carton.First_pass.kind with
           | Carton.First_pass.Base kind ->
               Hashtbl.add t.sizes offset (ref size);
-              Hashtbl.add t.bases entry.number offset;
+              Hashtbl.add t.bases pos offset;
               let uid =
                 match Option.map t.identify.serialize t.ctx with
                 | Some uid -> uid
@@ -230,6 +236,7 @@ let oracle ~identify =
               in
               Hashtbl.add t.ref_index offset ptr;
               new_child oracle ~parent:(`Ref ptr) offset
+          | Tombstone -> assert false
         end
     in
     oracle
@@ -267,7 +274,7 @@ let oracle ~identify =
     ; size
     ; checksum
     ; is_base
-    ; number_of_objects= t.number_of_objects
+    ; number_of_objects= t.real_count
     ; hash= t.hash
     }
   in

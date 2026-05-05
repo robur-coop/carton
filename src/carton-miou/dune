@@ -5,7 +5,7 @@
  (foreign_stubs
   (language c)
   (names pagesize))
- (libraries fpath miou.unix carton carton.classeur carton.cartonnage))
+ (libraries fpath miou.unix bstr carton carton.classeur carton.cartonnage))
 
 (library
  (name carton_miou_flux)
