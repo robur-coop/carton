@@ -1125,7 +1125,16 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   let promoted_values, rewired_raw, affected, promoted =
     diff metadata uids_to_delete t
   in
-  let n_affected = Hashtbl.length affected in
+  let n_affected =
+    let fn cursor () n =
+      let uid =
+        match Hashtbl.find entries cursor with
+        | Classified_base { uid; _ } | Classified_node { uid; _ } -> uid
+      in
+      if Hashtbl.mem deleted_set uid then n else n + 1
+    in
+    Hashtbl.fold fn affected 0
+  in
   let fd_t, file_size = Carton.fd t in
   Unix.close fd_t;
   let trailer_offset = file_size - digest_length in
