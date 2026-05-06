@@ -429,8 +429,10 @@ let entries_of_pack ~cfg ~digest filename =
     | None -> Unresolved_node { cursor= oracle.Carton.cursor ~pos }
   in
   let size = Hashtbl.create 0x7ff in
+  let mutex = Miou.Mutex.create () in
   let on ~cursor:_ value uid =
-    Hashtbl.add size uid (Carton.Value.length value)
+    let length = Carton.Value.length value in
+    Miou.Mutex.protect mutex @@ fun () -> Hashtbl.add size uid length
   in
   verify ?threads:cfg.threads ~on t oracle matrix;
   let idx = Hashtbl.create 0x7ff in
