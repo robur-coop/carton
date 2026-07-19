@@ -169,7 +169,9 @@ let verify ?(threads = 4) ?(on = ignore3) t oracle matrix =
       Atomic.fetch_and_add idx 1
     in
     if pos < Array.length matrix then begin
-      let[@warning "-8"] (Carton.Unresolved_base { cursor }) = matrix.(pos) in
+      let[@warning "-partial-match"] (Carton.Unresolved_base { cursor }) =
+        matrix.(pos)
+      in
       let size = oracle.Carton.size ~cursor in
       Log.debug (fun m -> m "resolve base (object %d) at %08x" pos cursor);
       Log.debug (fun m -> m "allocate a blob of %d byte(s)" (size :> int));

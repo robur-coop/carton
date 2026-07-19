@@ -360,7 +360,9 @@ let verify ?(threads = 4) q t oracle matrix =
     in
     Log.debug (fun m -> m "Resolve object %d/%d" pos (Array.length matrix));
     if pos < Array.length matrix then begin
-      let[@warning "-8"] (Carton.Unresolved_base { cursor }) = matrix.(pos) in
+      let[@warning "-partial-match"] (Carton.Unresolved_base { cursor }) =
+        matrix.(pos)
+      in
       let size = oracle.Carton.size ~cursor in
       let blob = Carton.Blob.make ~size in
       let value = Carton.of_offset t blob ~cursor in

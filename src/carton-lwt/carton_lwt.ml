@@ -227,7 +227,9 @@ let verify ?(threads = 4) ?(on = ignore3) t oracle matrix =
       end
     >>= fun pos ->
     if pos < Array.length matrix then begin
-      let[@warning "-8"] (Carton.Unresolved_base { cursor }) = matrix.(pos) in
+      let[@warning "-partial-match"] (Carton.Unresolved_base { cursor }) =
+        matrix.(pos)
+      in
       let size = oracle.Carton.size ~cursor in
       Log.debug (fun m -> m "resolve base at %08x" cursor);
       Log.debug (fun m -> m "allocate a blob of %d byte(s)" (size :> int));

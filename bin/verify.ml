@@ -64,7 +64,8 @@ let with_reporter ~config quiet t fn =
     | false ->
         let lines = Progress.Multi.(line t ++ line t) in
         let display = Progress.Display.start ~config lines in
-        let[@warning "-8"] Progress.Reporter.[ reporter0; reporter1 ] =
+        let[@warning "-partial-match"] Progress.Reporter.
+                                         [ reporter0; reporter1 ] =
           Progress.Display.reporters display
         in
         let on_entry n =

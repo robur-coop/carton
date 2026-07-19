@@ -191,7 +191,7 @@ module type UID = sig
   val pp : Format.formatter -> t -> unit
 end
 
-[@@@warning "-69"]
+[@@@warning "-unused-field"]
 
 module Encoder = struct
   type dst = [ `Channel of out_channel | `Buffer of Buffer.t | `Manual ]
