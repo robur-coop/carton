@@ -147,7 +147,7 @@ module M = struct
      instead [match .. with A -> .. | B -> .. | C -> ..]. *)
 
   let rec cp d =
-    let[@warning "-8"] (Cp command) = d.s in
+    let[@warning "-partial-match"] (Cp command) = d.s in
     let p = ref (if d.t_len > 0 then 0 else d.i_pos) in
     let i = if d.t_len > 0 then d.t_tmp else d.i in
     let cp_off = ref 0 in
@@ -189,7 +189,7 @@ module M = struct
     decode_k d
 
   and it d =
-    let[@warning "-8"] (It len) = d.s in
+    let[@warning "-partial-match"] (It len) = d.s in
     if d.t_len > 0 then begin
       Bstr.blit d.t_tmp ~src_off:0 d.dst ~dst_off:d.o_pos ~len;
       d.t_len <- 0;
@@ -389,7 +389,7 @@ module R = struct
   [@@inline]
 
   let rec cp decoder =
-    let[@warning "-8"] (Cp command) = decoder.s in
+    let[@warning "-partial-match"] (Cp command) = decoder.s in
     let p = ref (if decoder.t_len > 0 then 0 else decoder.i_pos) in
     let i = if decoder.t_len > 0 then decoder.t_tmp else decoder.i in
     let cp_off = ref 0 in
@@ -429,7 +429,7 @@ module R = struct
     `Copy (!cp_off, !cp_len)
 
   and it decoder =
-    let[@warning "-8"] (It len) = decoder.s in
+    let[@warning "-partial-match"] (It len) = decoder.s in
     if decoder.t_len > 0 then begin
       let str = Bytes.sub_string decoder.t_tmp 0 len in
       decoder.s <- Cmd;
@@ -535,7 +535,7 @@ module R = struct
     go seq
 end
 
-[@@@warning "-69"]
+[@@@warning "-unused-field"]
 
 module N = struct
   type dst = [ `Buffer of Buffer.t | `Manual ]

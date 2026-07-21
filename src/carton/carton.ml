@@ -82,7 +82,7 @@ module First_pass = struct
   let serialize (Digest ({ serialize; _ }, ctx)) = serialize ctx
   let length_of_hash (Digest ({ length; _ }, _)) = length
 
-  [@@@warning "-30"]
+  [@@@warning "-duplicate-definitions"]
 
   type decoder = {
       src: src

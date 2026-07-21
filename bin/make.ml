@@ -181,7 +181,7 @@ let with_reporter ~config ?total quiet =
       let display =
         Progress.(Display.start ~config Multi.(line (bar ~total)))
       in
-      let[@warning "-8"] Progress.Reporter.[ reporter ] =
+      let[@warning "-partial-match"] Progress.Reporter.[ reporter ] =
         Progress.Display.reporters display
       in
       let on n =
