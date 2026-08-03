@@ -1,3 +1,9 @@
+### 1.3.0 (2026-08-03) Paris - France
+
+- Add a _tombstone_ entry on our PACK file (to hard-delete entries) (@dinosaure, #20)
+- Fix a datarace on our internal hashtbls (@dinosaure, #21)
+- Use warning name instead of number (@hannesm, #22)
+
 ### 1.2.0 (2026-01-20) Paris - France
 
 - Re-organize the distribution layout (specially about `carton-miou`) (@dinosaure, #12)
