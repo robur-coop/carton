@@ -8,6 +8,12 @@
  (libraries fpath miou.unix bstr carton carton.classeur carton.cartonnage))
 
 (library
+ (name carton_miou_bundle)
+ (modules carton_miou_bundle)
+ (public_name carton-miou.bundle)
+ (libraries fpath carton carton.bundle carton-miou.unix))
+
+(library
  (name carton_miou_flux)
  (modules carton_miou_flux)
  (public_name carton-miou.flux)
