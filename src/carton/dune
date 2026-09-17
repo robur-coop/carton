@@ -27,3 +27,10 @@
  (public_name carton.cartonnage)
  (wrapped false)
  (libraries carton))
+
+(library
+ (name bundle)
+ (modules bundle)
+ (public_name carton.bundle)
+ (wrapped false)
+ (libraries ohex carton))
