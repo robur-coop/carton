@@ -1,0 +1,21 @@
+(executable
+ (name boite)
+ (modules boite)
+ (public_name boite)
+ (package carton-miou)
+ (enabled_if %{arch_sixtyfour})
+ (libraries
+  ohex
+  fpath
+  digestif
+  miou.unix
+  carton
+  carton.bundle
+  carton.cartonnage
+  carton-miou.unix
+  carton-miou.bundle))
+
+(cram
+ (package carton-miou)
+ (enabled_if %{arch_sixtyfour})
+ (deps boite.exe fields.ml %{bin:carton} %{bin:git}))

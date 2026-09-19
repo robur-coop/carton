@@ -130,3 +130,7 @@ val delete_in_place :
     descendants as carbon-copied deltas with recomputed ofs-delta headers). The
     header object count and trailer hash are updated accordingly. This operation
     does {b not} reclaim disk space for the removed/replaced entries. *)
+
+(**/*)
+
+val seq_of_filename : Fpath.t -> string Seq.t
