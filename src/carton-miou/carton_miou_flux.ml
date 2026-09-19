@@ -391,7 +391,38 @@ let verify ?(threads = 4) q t oracle matrix =
   in
   List.iter (function Ok () -> () | Error exn -> raise exn) results
 
-let entries ?threads pack oracle =
+let resolve_extern q t oracle matrix extern =
+  let sources = Hashtbl.create 0x7ff in
+  let collect = function
+    | Carton.Unresolved_node { cursor } ->
+        Option.iter
+          (fun ptr -> Hashtbl.replace sources ptr ())
+          (Carton.ptr_of_offset t ~cursor)
+    | _ -> ()
+  in
+  Array.iter collect matrix;
+  let resolve uid () =
+    match extern uid with
+    | None -> ()
+    | Some (kind, bstr) ->
+        let children = oracle.Carton.children ~cursor:(-1) ~uid in
+        let children = Array.of_list children in
+        if Array.length children > 0 then begin
+          let len = Bstr.length bstr in
+          let fn acc cursor =
+            Int.max acc (Carton.Size.to_int (oracle.size ~cursor))
+          in
+          let size = Array.fold_left fn len children in
+          let blob = Carton.Blob.make ~size:(Carton.Size.of_int_exn size) in
+          Bstr.blit bstr ~src_off:0 (Carton.Blob.payload blob) ~dst_off:0 ~len;
+          let value = Carton.Value.of_blob ~kind ~length:len blob in
+          let base = { value= Carton.Value.flip value; uid; depth= 0 } in
+          resolve_tree q t oracle matrix ~base children
+        end
+  in
+  Hashtbl.iter resolve sources
+
+let entries ?threads ?extern pack oracle =
   Flux.Source.with_task ~size:0x7ff @@ fun q ->
   let matrix =
     Array.init oracle.Carton.number_of_objects @@ fun pos ->
@@ -400,4 +431,5 @@ let entries ?threads pack oracle =
     | None -> Unresolved_node { cursor= oracle.cursor ~pos }
   in
   verify ?threads q pack oracle matrix;
+  Option.iter (resolve_extern q pack oracle matrix) extern;
   Flux.Bqueue.close q

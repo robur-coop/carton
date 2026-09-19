@@ -12,6 +12,7 @@ val oracle :
 
 val entries :
      ?threads:int
+  -> ?extern:(Carton.Uid.t -> (Carton.Kind.t * Bstr.t) option)
   -> 'fd Carton.t
   -> Carton.oracle
   -> (Carton.Value.t * int * Carton.Uid.t) Flux.source
