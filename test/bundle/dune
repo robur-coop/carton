@@ -1,6 +1,8 @@
 (executable
  (name boite)
  (modules boite)
+ (public_name boite)
+ (package carton-miou)
  (enabled_if %{arch_sixtyfour})
  (libraries
   ohex
