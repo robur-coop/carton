@@ -210,7 +210,8 @@ let roundtrip () =
   check (Bundle.make []);
   check
     (Bundle.make
-       ~prerequisites:[ (gen_uid20 1, Some "a commit subject"); (gen_uid20 2, None) ]
+       ~prerequisites:
+         [ (gen_uid20 1, Some "a commit subject"); (gen_uid20 2, None) ]
        [ ("refs/heads/main", gen_uid20 0); ("refs/tags/v1.0.0", gen_uid20 3) ]);
   check
     (Bundle.make
