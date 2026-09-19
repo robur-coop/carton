@@ -490,6 +490,11 @@ val size_of_offset :
 
 val kind_of_offset : 'fd t -> cursor:int -> Kind.t
 
+val ptr_of_offset : 'fd t -> cursor:int -> Uid.t option
+(** [ptr_of_offset pack ~cursor] is the unique identifier of the source of the
+    [OBJ_REF_DELTA] entry located at [cursor], [None] if this entry is not an
+    [OBJ_REF_DELTA]. *)
+
 val size_of_uid : 'fd t -> ?visited:Visited.t -> uid:Uid.t -> Size.t -> Size.t
 (** [size_of_uid pack ?visited ~uid size] returns the size of the buffers (see
     {!module:Blob}s) required to extract the object identified by [uid] from the

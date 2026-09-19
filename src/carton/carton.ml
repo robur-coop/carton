@@ -1133,6 +1133,12 @@ let rec kind_of_offset t ~cursor =
     end
   | _ -> assert false
 
+let ptr_of_offset t ~cursor =
+  let (kind, _size), cursor' = header_of_entry t ~cursor in
+  match kind with
+  | 0b111 -> Some (Uid.unsafe_of_string (header_of_ref_delta t ~cursor:cursor'))
+  | _ -> None
+
 module Path = struct
   type t = { path: int array; depth: int; kind: Kind.t; size: Size.t }
 
