@@ -16,4 +16,4 @@
 (cram
  (package carton-miou)
  (enabled_if %{arch_sixtyfour})
- (deps boite.exe %{bin:carton} %{bin:git}))
+ (deps boite.exe fields.ml %{bin:carton} %{bin:git}))

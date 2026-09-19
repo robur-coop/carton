@@ -48,13 +48,15 @@
 
   $ $BT split all.bundle all.pack
   $ carton index all.pack
-  $ carton verify --without-progress --without-consumed all.idx
-  2cf3dc252385a12e1092540af768f754d56e5089 commit  12 07ac3d6d
-  fb4d9a48accb955b670aea3da995625468824d59 commit 154 b92b848e
-  d4e01edf1e8aa72182ed9449e7d12b5e4df8b201 tree   267 b2e9f3c7
-  2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1 tree   311 905e29b0
-  94954abda49de8615a048f8d2e64b5de848e27a1 blob   355 21ba35fa
-  ce013625030ba8dba906f756967f9e9ca394464a blob   376 52941500
+Offsets and CRC32 depend on the zlib used by Git (zlib, zlib-ng, etc.), so we
+only keep the hash and the kind of objects.
+  $ carton verify --without-progress --without-consumed all.idx | ocaml fields.ml
+  2cf3dc252385a12e1092540af768f754d56e5089 commit
+  fb4d9a48accb955b670aea3da995625468824d59 commit
+  d4e01edf1e8aa72182ed9449e7d12b5e4df8b201 tree
+  2e81171448eb9f2ee3821e3d447aa6b2fe3ddba1 tree
+  94954abda49de8615a048f8d2e64b5de848e27a1 blob
+  ce013625030ba8dba906f756967f9e9ca394464a blob
 
   $ oid=$(git -C repo rev-parse main)
   $ $BT create -o new.bundle -p all.pack -r refs/heads/main=$oid -r HEAD=$oid
