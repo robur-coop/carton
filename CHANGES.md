@@ -1,3 +1,8 @@
+### 1.4.0 (2026-09-21) Paris - France
+
+- Implement `carton.bundle` to be able to parse and emit Git bundle (@dinosaure, #24)
+- Be able to manipulate thin PACKv2 stream (@dinosaure, #25)
+
 ### 1.3.0 (2026-08-03) Paris - France
 
 - Add a _tombstone_ entry on our PACK file (to hard-delete entries) (@dinosaure, #20)
