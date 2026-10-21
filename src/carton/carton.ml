@@ -825,6 +825,7 @@ module Value = struct
 end
 
 type location = Local of int | Extern of Kind.t * Bstr.t
+type inflate = src:Bstr.t -> dst:Bstr.t -> (int, [ `Msg of string ]) result
 
 type 'fd t = {
     cache: 'fd Cachet.t
@@ -832,26 +833,30 @@ type 'fd t = {
   ; ref_length: int
   ; tmp: Bstr.t
   ; allocate: int -> Zl.window
+  ; inflate: inflate option
 }
 
 let fd { cache; _ } = Cachet.fd cache
 let cache { cache; _ } = cache
 let allocate { allocate; _ } = allocate
+let inflate { inflate; _ } = inflate
 let tmp { tmp; _ } = tmp
 let ref_length { ref_length; _ } = ref_length
 let with_index t where = { t with where }
 
-let make ?pagesize ?cachesize ~map fd ~z:tmp ~allocate ~ref_length where =
+let make ?pagesize ?cachesize ?inflate ~map fd ~z:tmp ~allocate ~ref_length
+    where =
   {
     cache= Cachet.make ?pagesize ?cachesize ~map fd
   ; where
   ; ref_length
   ; tmp
   ; allocate
+  ; inflate
   }
 
-let of_cache cache ~z:tmp ~allocate ~ref_length where =
-  { cache; where; ref_length; tmp; allocate }
+let of_cache ?inflate cache ~z:tmp ~allocate ~ref_length where =
+  { cache; where; ref_length; tmp; allocate; inflate }
 
 let copy t =
   {
@@ -860,6 +865,7 @@ let copy t =
   ; ref_length= t.ref_length
   ; tmp= Bstr.copy t.tmp
   ; allocate= t.allocate
+  ; inflate= t.inflate
   }
 
 let size_of_delta t ~cursor size =
@@ -1004,7 +1010,26 @@ let actual_size_of_offset : type fd. fd t -> cursor:int -> int =
   let (_, size), _ = header_of_entry t ~cursor in
   size
 
-let uncompress t kind blob ~cursor =
+let deflated t ~cursor size =
+  let len = Zl.Def.Ns.compress_bound size in
+  (* NOTE(dinosaure): a really pessimist but correct length. *)
+  (Cachet.map t.cache ~pos:cursor len :> Bstr.t)
+
+let inflate_one_pass t fn ~anchor ~cursor dst =
+  let src = deflated t ~cursor (Bstr.length dst) in
+  match fn ~src ~dst with
+  | Ok len when len = Bstr.length dst -> ()
+  | Ok len ->
+      failwithf "object <%08x>: unexpected inflated length (%d, expected %d)"
+        anchor len (Bstr.length dst)
+  | Error (`Msg err) -> failwithf "object <%08x>: %s" anchor err
+
+let uncompress_one_pass t fn kind blob ~size ~cursor =
+  let dst = Bigarray.Array1.sub (Blob.payload blob) 0 size in
+  inflate_one_pass t fn ~anchor:cursor ~cursor dst;
+  { Value.kind; blob; len= size; depth= 1 }
+
+let uncompress_stream t kind blob ~cursor =
   let anchor = cursor in
   let o = Blob.payload blob in
   let rec go ~real_length ~flushed slice decoder =
@@ -1043,7 +1068,34 @@ let uncompress t kind blob ~cursor =
       go ~real_length:0 ~flushed:false slice decoder
   | None -> assert false
 
-let of_delta t kind blob ~depth ~cursor =
+let uncompress t kind blob ~size ~cursor =
+  match t.inflate with
+  | Some fn -> uncompress_one_pass t fn kind blob ~size ~cursor
+  | None -> uncompress_stream t kind blob ~cursor
+
+let of_delta_one_pass t fn kind blob ~depth ~size ~cursor =
+  let tmp = if Bstr.length t.tmp >= size then t.tmp else Bstr.create size in
+  let tmp = Bigarray.Array1.sub tmp 0 size in
+  inflate_one_pass t fn ~anchor:cursor ~cursor tmp;
+  let decoder = H.M.decoder `Manual in
+  H.M.src decoder tmp 0 size;
+  let rec go () =
+    match H.M.decode decoder with
+    | `End ->
+        let len = H.M.dst_len decoder in
+        { Value.kind; blob; len; depth }
+    | `Malformed err -> failwith err
+    | `Header (_src_len, dst_len) ->
+        H.M.source decoder (Blob.source blob);
+        H.M.dst decoder (Blob.payload blob) 0 dst_len;
+        (go [@tailcall]) ()
+    | `Await ->
+        H.M.src decoder Bstr.empty 0 0;
+        (go [@tailcall]) ()
+  in
+  go ()
+
+let of_delta_stream t kind blob ~depth ~cursor =
   let decoder = Zh.M.decoder ~o:t.tmp ~allocate:t.allocate `Manual in
   let rec go slice blob decoder =
     match Zh.M.decode decoder with
@@ -1081,15 +1133,20 @@ let of_delta t kind blob ~depth ~cursor =
       go slice blob decoder
   | None -> assert false
 
-let rec of_ofs_delta t blob ~anchor ~cursor =
+let of_delta t kind blob ~depth ~size ~cursor =
+  match t.inflate with
+  | Some fn -> of_delta_one_pass t fn kind blob ~depth ~size ~cursor
+  | None -> of_delta_stream t kind blob ~depth ~cursor
+
+let rec of_ofs_delta t blob ~anchor ~size ~cursor =
   let rel_offset, cursor' = header_of_ofs_delta t ~cursor in
   let v = of_offset t (Blob.flip blob) ~cursor:(anchor - rel_offset) in
-  of_delta t v.Value.kind blob ~depth:(succ v.depth) ~cursor:cursor'
+  of_delta t v.Value.kind blob ~depth:(succ v.depth) ~size ~cursor:cursor'
 
-and of_ref_delta t blob ~cursor =
+and of_ref_delta t blob ~size ~cursor =
   let uid = header_of_ref_delta t ~cursor in
   let v = of_uid t (Blob.flip blob) ~uid in
-  of_delta t v.Value.kind blob ~depth:(succ v.depth)
+  of_delta t v.Value.kind blob ~depth:(succ v.depth) ~size
     ~cursor:(cursor + t.ref_length)
 
 and of_uid t blob ~uid =
@@ -1102,16 +1159,16 @@ and of_uid t blob ~uid =
       { Value.kind; blob; len; depth= 1 }
 
 and of_offset t blob ~cursor =
-  let (kind, _size), cursor' = header_of_entry t ~cursor in
+  let (kind, size), cursor' = header_of_entry t ~cursor in
   Log.debug (fun m -> m "decode a new entry (%d)" kind);
   match kind with
   | 0b000 | 0b101 -> raise Bad_type
-  | 0b001 -> uncompress t `A blob ~cursor:cursor'
-  | 0b010 -> uncompress t `B blob ~cursor:cursor'
-  | 0b011 -> uncompress t `C blob ~cursor:cursor'
-  | 0b100 -> uncompress t `D blob ~cursor:cursor'
-  | 0b110 -> of_ofs_delta t blob ~anchor:cursor ~cursor:cursor'
-  | 0b111 -> of_ref_delta t blob ~cursor:cursor'
+  | 0b001 -> uncompress t `A blob ~size ~cursor:cursor'
+  | 0b010 -> uncompress t `B blob ~size ~cursor:cursor'
+  | 0b011 -> uncompress t `C blob ~size ~cursor:cursor'
+  | 0b100 -> uncompress t `D blob ~size ~cursor:cursor'
+  | 0b110 -> of_ofs_delta t blob ~anchor:cursor ~size ~cursor:cursor'
+  | 0b111 -> of_ref_delta t blob ~size ~cursor:cursor'
   | _ -> assert false
 
 let rec kind_of_offset t ~cursor =
@@ -1217,33 +1274,33 @@ let path_of_uid t uid =
   | Extern _ -> Fmt.failwith "%a is a not a part of the PACK file" Uid.pp uid
 
 let of_offset_with_source t kind blob ~depth ~cursor =
-  let (kind', _size), cursor' = header_of_entry t ~cursor in
+  let (kind', size), cursor' = header_of_entry t ~cursor in
   match kind' with
   | 0b000 | 0b101 -> raise Bad_type
   | 0b001 ->
       assert (kind = `A);
-      uncompress t `A blob ~cursor:cursor'
+      uncompress t `A blob ~size ~cursor:cursor'
   | 0b010 ->
       assert (kind = `B);
-      uncompress t `B blob ~cursor:cursor'
+      uncompress t `B blob ~size ~cursor:cursor'
   | 0b011 ->
       assert (kind = `C);
-      uncompress t `C blob ~cursor:cursor'
+      uncompress t `C blob ~size ~cursor:cursor'
   | 0b100 ->
       assert (kind = `D);
-      uncompress t `D blob ~cursor:cursor'
+      uncompress t `D blob ~size ~cursor:cursor'
   | 0b110 ->
       let _rel_offset, cursor'' = header_of_ofs_delta t ~cursor:cursor' in
-      of_delta t kind blob ~depth ~cursor:cursor''
-  | 0b111 -> of_delta t kind blob ~depth ~cursor:(cursor' + t.ref_length)
+      of_delta t kind blob ~depth ~size ~cursor:cursor''
+  | 0b111 -> of_delta t kind blob ~depth ~size ~cursor:(cursor' + t.ref_length)
   | _ -> assert false
 
 let base_of_offset t blob ~cursor =
   Log.debug (fun m -> m "load base at %08x" cursor);
-  let (kind, _size), cursor' = header_of_entry t ~cursor in
+  let (kind, size), cursor' = header_of_entry t ~cursor in
   let kind = kind_of_int kind in
   Log.debug (fun m -> m "uncompress at %08x" cursor');
-  uncompress t kind blob ~cursor:cursor'
+  uncompress t kind blob ~size ~cursor:cursor'
 
 let of_offset_with_path t ~path blob ~cursor =
   assert (cursor = path.Path.path.(0));
@@ -1263,7 +1320,7 @@ let of_offset_with_source t { Value.kind; blob; depth; _ } ~cursor =
 type identify = Identify : 'ctx First_pass.identify -> identify
 
 let uid_of_offset ~identify:(Identify gen) t blob ~cursor =
-  let (kind', _), cursor' = header_of_entry t ~cursor in
+  let (kind', size), cursor' = header_of_entry t ~cursor in
   let kind =
     match kind' with
     | 0b001 -> `A
@@ -1272,7 +1329,7 @@ let uid_of_offset ~identify:(Identify gen) t blob ~cursor =
     | 0b100 -> `D
     | _ -> raise Bad_type
   in
-  let value = uncompress t kind blob ~cursor:cursor' in
+  let value = uncompress t kind blob ~size ~cursor:cursor' in
   let bstr = Blob.payload blob in
   let ctx = gen.First_pass.init kind value.len in
   let ctx = gen.First_pass.feed (Bigarray.Array1.sub bstr 0 value.len) ctx in
@@ -1285,38 +1342,38 @@ let identify (Identify gen) ~kind ~len bstr =
   gen.First_pass.serialize ctx
 
 let uid_of_offset_with_source ~identify:gen t ~kind blob ~depth ~cursor =
-  let (kind', _), cursor' = header_of_entry t ~cursor in
+  let (kind', size), cursor' = header_of_entry t ~cursor in
   match kind' with
   | 0b000 | 0b101 -> raise Bad_type
   | 0b001 ->
       assert (kind = `A);
       assert (depth = 1);
-      let v = uncompress t `A blob ~cursor:cursor' in
+      let v = uncompress t `A blob ~size ~cursor:cursor' in
       identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b010 ->
       assert (kind = `B);
       assert (depth = 1);
-      let v = uncompress t `B blob ~cursor:cursor' in
+      let v = uncompress t `B blob ~size ~cursor:cursor' in
       identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b011 ->
       assert (kind = `C);
       assert (depth = 1);
-      let v = uncompress t `C blob ~cursor:cursor' in
+      let v = uncompress t `C blob ~size ~cursor:cursor' in
       identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b100 ->
       assert (kind = `D);
       assert (depth = 1);
-      let v = uncompress t `D blob ~cursor:cursor' in
+      let v = uncompress t `D blob ~size ~cursor:cursor' in
       identify gen ~kind ~len:v.len (Blob.payload blob)
   | 0b110 ->
       let _, cursor'' = header_of_ofs_delta t ~cursor:cursor' in
       let { Value.blob; len; _ } =
-        of_delta t kind blob ~depth ~cursor:cursor''
+        of_delta t kind blob ~depth ~size ~cursor:cursor''
       in
       identify gen ~kind ~len (Blob.payload blob)
   | 0b111 ->
       let { Value.blob; len; _ } =
-        of_delta t kind blob ~depth ~cursor:(cursor' + t.ref_length)
+        of_delta t kind blob ~depth ~size ~cursor:(cursor' + t.ref_length)
       in
       identify gen ~kind ~len (Blob.payload blob)
   | _ -> assert false
