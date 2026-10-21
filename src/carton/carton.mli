@@ -368,9 +368,27 @@ type 'fd t
 
 type location = Local of int | Extern of Kind.t * Bstr.t
 
+type inflate = src:Bstr.t -> dst:Bstr.t -> (int, [ `Msg of string ]) result
+(** Type of a {i one-pass} inflation function.
+
+    [inflate ~src ~dst] must inflate the zlib stream which starts at the
+    beginning of [src] into [dst] and return the number of bytes written. [src]
+    can be larger than the zlib stream: bytes after the end of the stream must
+    be ignored. [dst] has exactly the expected length of the inflated content.
+
+    {[
+    let inflate ~src ~dst =
+      match Zl.Inf.Ns.inflate src dst with
+      | Ok (_, len) -> Ok len
+      | Error err ->
+          let msg = Fmt.str "%a" Zl.Inf.Ns.pp_error err in
+          Error (`Msg msg)
+    ]} *)
+
 val make :
      ?pagesize:int
   -> ?cachesize:int
+  -> ?inflate:inflate
   -> map:'fd Cachet.map
   -> 'fd
   -> z:Bstr.t
@@ -397,17 +415,22 @@ val make :
 
     [make] calls [Cachet.make] with the [cachesize] and [pagesize] arguments.
     These must be multiples of 2. For more details about these arguments and
-    [map], please refer to the Cachet documentation. *)
+    [map], please refer to the Cachet documentation.
+
+    If [inflate] is given, it is used (instead of [decompress]) to inflate
+    entries when objects are extracted (see {!type:inflate}). *)
 
 val of_cache :
-     'fd Cachet.t
+     ?inflate:inflate
+  -> 'fd Cachet.t
   -> z:Bstr.t
   -> allocate:(int -> Zl.window)
   -> ref_length:int
   -> (Uid.t -> location)
   -> 'fd t
-(** [of_cache cache ~z ~allocate ~ref_length where] is equivalent to {!val:make}
-    but uses the [cache] already available and initialised by the user. *)
+(** [of_cache ?inflate cache ~z ~allocate ~ref_length where] is equivalent to
+    {!val:make} but uses the [cache] already available and initialised by the
+    user. *)
 
 val copy : 'fd t -> 'fd t
 (** [copy t] makes a copy of the PACK file representation, which implies a new
@@ -423,6 +446,7 @@ val cache : 'fd t -> 'fd Cachet.t
 (** [cache t] returns the cache used to access pages in the PACK file. *)
 
 val allocate : 'fd t -> int -> Zl.window
+val inflate : 'fd t -> inflate option
 val tmp : 'fd t -> Bstr.t
 val ref_length : 'fd t -> int
 val map : 'fd t -> cursor:int -> consumed:int -> Cachet.Bstr.t
