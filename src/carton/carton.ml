@@ -833,7 +833,7 @@ type 'fd t = {
   ; ref_length: int
   ; tmp: Bstr.t
   ; allocate: int -> Zl.window
-  ; inflate: inflate option
+  ; inflate: inflate
 }
 
 let fd { cache; _ } = Cachet.fd cache
@@ -843,9 +843,15 @@ let inflate { inflate; _ } = inflate
 let tmp { tmp; _ } = tmp
 let ref_length { ref_length; _ } = ref_length
 let with_index t where = { t with where }
+let error_msgf fmt = Format.kasprintf (fun msg -> Error (`Msg msg)) fmt
 
-let make ?pagesize ?cachesize ?inflate ~map fd ~z:tmp ~allocate ~ref_length
-    where =
+let default_inflate ~src ~dst =
+  match Zl.Inf.Ns.inflate src dst with
+  | Ok (_, len) -> Ok len
+  | Error err -> error_msgf "%a" Zl.Inf.Ns.pp_error err
+
+let make ?pagesize ?cachesize ?(inflate = default_inflate) ~map fd ~z:tmp
+    ~allocate ~ref_length where =
   {
     cache= Cachet.make ?pagesize ?cachesize ~map fd
   ; where
@@ -855,7 +861,8 @@ let make ?pagesize ?cachesize ?inflate ~map fd ~z:tmp ~allocate ~ref_length
   ; inflate
   }
 
-let of_cache ?inflate cache ~z:tmp ~allocate ~ref_length where =
+let of_cache ?(inflate = default_inflate) cache ~z:tmp ~allocate ~ref_length
+    where =
   { cache; where; ref_length; tmp; allocate; inflate }
 
 let copy t =
@@ -1015,68 +1022,24 @@ let deflated t ~cursor size =
   (* NOTE(dinosaure): a really pessimist but correct length. *)
   (Cachet.map t.cache ~pos:cursor len :> Bstr.t)
 
-let inflate_one_pass t fn ~anchor ~cursor dst =
+let inflate_one_pass t ~anchor ~cursor dst =
   let src = deflated t ~cursor (Bstr.length dst) in
-  match fn ~src ~dst with
+  match t.inflate ~src ~dst with
   | Ok len when len = Bstr.length dst -> ()
   | Ok len ->
       failwithf "object <%08x>: unexpected inflated length (%d, expected %d)"
         anchor len (Bstr.length dst)
   | Error (`Msg err) -> failwithf "object <%08x>: %s" anchor err
 
-let uncompress_one_pass t fn kind blob ~size ~cursor =
+let uncompress t kind blob ~size ~cursor =
   let dst = Bigarray.Array1.sub (Blob.payload blob) 0 size in
-  inflate_one_pass t fn ~anchor:cursor ~cursor dst;
+  inflate_one_pass t ~anchor:cursor ~cursor dst;
   { Value.kind; blob; len= size; depth= 1 }
 
-let uncompress_stream t kind blob ~cursor =
-  let anchor = cursor in
-  let o = Blob.payload blob in
-  let rec go ~real_length ~flushed slice decoder =
-    match Zl.Inf.decode decoder with
-    | `Malformed err -> failwithf "object <%08x>: %s" anchor err
-    | `End decoder ->
-        let len = Bigarray.Array1.dim o - Zl.Inf.dst_rem decoder in
-        assert (flushed || ((not flushed) && len = 0));
-        (* XXX(dinosaure): we gave a [o] buffer which is enough to store
-           inflated data. At the end, [decoder] should not return more than one
-           [`Flush]. A special case is when we inflate nothing: [`Flush] never
-           appears and we reach [`End] directly, so [!p (still) = false and len
-           (must) = 0]. *)
-        { Value.kind; blob; len= real_length; depth= 1 }
-    | `Flush decoder ->
-        let real_length = Bigarray.Array1.dim o - Zl.Inf.dst_rem decoder in
-        assert (not flushed);
-        let decoder = Zl.Inf.flush decoder in
-        (go [@tailcall]) ~real_length ~flushed:true slice decoder
-    | `Await decoder -> (
-        match Cachet.next t.cache slice with
-        | Some ({ payload; length; _ } as slice) ->
-            let decoder = Zl.Inf.src decoder (payload :> Bstr.t) 0 length in
-            (go [@tailcall]) ~real_length ~flushed slice decoder
-        | None ->
-            let decoder = Zl.Inf.src decoder Bstr.empty 0 0 in
-            (go [@tailcall]) ~real_length ~flushed slice decoder)
-  in
-  Log.debug (fun m -> m "load %08x" cursor);
-  match Cachet.load t.cache cursor with
-  | Some ({ offset; payload; length } as slice) ->
-      let off = cursor - offset in
-      let len = length - off in
-      let decoder = Zl.Inf.decoder `Manual ~o ~allocate:t.allocate in
-      let decoder = Zl.Inf.src decoder (payload :> Bstr.t) off len in
-      go ~real_length:0 ~flushed:false slice decoder
-  | None -> assert false
-
-let uncompress t kind blob ~size ~cursor =
-  match t.inflate with
-  | Some fn -> uncompress_one_pass t fn kind blob ~size ~cursor
-  | None -> uncompress_stream t kind blob ~cursor
-
-let of_delta_one_pass t fn kind blob ~depth ~size ~cursor =
+let of_delta_one_pass t kind blob ~depth ~size ~cursor =
   let tmp = if Bstr.length t.tmp >= size then t.tmp else Bstr.create size in
   let tmp = Bigarray.Array1.sub tmp 0 size in
-  inflate_one_pass t fn ~anchor:cursor ~cursor tmp;
+  inflate_one_pass t ~anchor:cursor ~cursor tmp;
   let decoder = H.M.decoder `Manual in
   H.M.src decoder tmp 0 size;
   let rec go () =
@@ -1095,48 +1058,8 @@ let of_delta_one_pass t fn kind blob ~depth ~size ~cursor =
   in
   go ()
 
-let of_delta_stream t kind blob ~depth ~cursor =
-  let decoder = Zh.M.decoder ~o:t.tmp ~allocate:t.allocate `Manual in
-  let rec go slice blob decoder =
-    match Zh.M.decode decoder with
-    | `End decoder ->
-        let len = Zh.M.dst_len decoder in
-        { Value.kind; blob; len; depth }
-    | `Malformed err -> failwith err
-    | `Header (src_len, dst_len, decoder) ->
-        let source = Blob.source blob in
-        let payload = Blob.payload blob in
-        Log.debug (fun m ->
-            m "specify the source to apply the patch on %08x" cursor);
-        Log.debug (fun m ->
-            m "src_len: %d, required: %d" (Bigarray.Array1.dim source) src_len);
-        let decoder = Zh.M.source decoder source in
-        Log.debug (fun m -> m "dst_len: %d" dst_len);
-        let decoder = Zh.M.dst decoder payload 0 dst_len in
-        (go [@tailcall]) slice blob decoder
-    | `Await decoder ->
-        begin match Cachet.next t.cache slice with
-        | None ->
-            let decoder = Zh.M.src decoder Bstr.empty 0 0 in
-            (go [@tailcall]) slice blob decoder
-        | Some ({ payload; length; _ } as slice) ->
-            let decoder = Zh.M.src decoder (payload :> Bstr.t) 0 length in
-            (go [@tailcall]) slice blob decoder
-        end
-  in
-  Log.debug (fun m -> m "load %08x" cursor);
-  match Cachet.load t.cache cursor with
-  | Some ({ offset; payload; length } as slice) ->
-      let off = cursor - offset in
-      let len = length - off in
-      let decoder = Zh.M.src decoder (payload :> Bstr.t) off len in
-      go slice blob decoder
-  | None -> assert false
-
 let of_delta t kind blob ~depth ~size ~cursor =
-  match t.inflate with
-  | Some fn -> of_delta_one_pass t fn kind blob ~depth ~size ~cursor
-  | None -> of_delta_stream t kind blob ~depth ~cursor
+  of_delta_one_pass t kind blob ~depth ~size ~cursor
 
 let rec of_ofs_delta t blob ~anchor ~size ~cursor =
   let rel_offset, cursor' = header_of_ofs_delta t ~cursor in

@@ -446,7 +446,7 @@ val cache : 'fd t -> 'fd Cachet.t
 (** [cache t] returns the cache used to access pages in the PACK file. *)
 
 val allocate : 'fd t -> int -> Zl.window
-val inflate : 'fd t -> inflate option
+val inflate : 'fd t -> inflate
 val tmp : 'fd t -> Bstr.t
 val ref_length : 'fd t -> int
 val map : 'fd t -> cursor:int -> consumed:int -> Cachet.Bstr.t
