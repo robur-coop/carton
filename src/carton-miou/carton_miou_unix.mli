@@ -86,7 +86,12 @@ val to_pack :
   -> 'meta Cartonnage.Target.t Seq.t
   -> string Seq.t
 
-type delta = { source: Carton.Uid.t; depth: int; raw: Cachet.Bstr.t }
+type delta = {
+    source: Carton.Uid.t
+  ; depth: int
+  ; raw: Cachet.Bstr.t
+  ; length: int
+}
 
 val entries_of_pack :
      cfg:config

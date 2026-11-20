@@ -64,13 +64,19 @@ module Patch = struct
         ; source_length: int
         ; target_length: int
       }
-    | Carbon_copy of { depth: int; source: Carton.Uid.t; bstr: De.bigstring }
+    | Carbon_copy of {
+          depth: int
+        ; source: Carton.Uid.t
+        ; bstr: De.bigstring
+        ; length: int
+      }
 
   let of_delta ~depth ~source ~src_len:source_length ~dst_len:target_length
       hunks =
     Patch { hunks; depth; source; source_length; target_length }
 
-  let of_copy ~depth ~source bstr = Carbon_copy { depth; source; bstr }
+  let of_copy ~depth ~source ~length bstr =
+    Carbon_copy { depth; source; bstr; length }
 
   let source = function
     | Patch { source; _ } -> source
@@ -113,7 +119,7 @@ module Patch = struct
   let length = function
     | Patch { hunks; source_length; target_length; _ } ->
         length ~source:source_length ~target:target_length hunks
-    | Carbon_copy { bstr; _ } -> De.bigstring_length bstr
+    | Carbon_copy { length; _ } -> length
 
   let pp ppf _t = Format.fprintf ppf "#patch"
 end

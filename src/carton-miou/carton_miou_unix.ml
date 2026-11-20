@@ -398,7 +398,12 @@ let verify_from_pack
 
 (** generate entries to pack from a pack file *)
 
-type delta = { source: Carton.Uid.t; depth: int; raw: Cachet.Bstr.t }
+type delta = {
+    source: Carton.Uid.t
+  ; depth: int
+  ; raw: Cachet.Bstr.t
+  ; length: int
+}
 
 let entries_of_pack ~cfg ~digest filename =
   let raw = Hashtbl.create 0x7ff in
@@ -413,7 +418,7 @@ let entries_of_pack ~cfg ~digest filename =
   let on ~max:_ entry =
     let cursor = entry.offset and consumed = entry.consumed in
     let bstr = Carton.map t ~cursor ~consumed in
-    Hashtbl.add raw cursor bstr
+    Hashtbl.add raw cursor (bstr, (entry.size :> int))
   in
   let seq = seq_of_filename filename in
   let seq =
@@ -449,8 +454,8 @@ let entries_of_pack ~cfg ~digest filename =
         Cartonnage.Entry.make ~kind uid ~length:(length :> int) meta
     | Resolved_node { cursor; uid; kind; depth; parent; _ } ->
         Hashtbl.add idx uid (Carton.Local cursor);
-        let raw = Hashtbl.find raw cursor in
-        let delta = { source= parent; depth; raw } in
+        let raw, length = Hashtbl.find raw cursor in
+        let delta = { source= parent; depth; raw; length } in
         let meta = (t, Some delta) in
         let length = Hashtbl.find size uid in
         Cartonnage.Entry.make ~kind uid ~length:(length :> int) meta
@@ -852,11 +857,11 @@ let delta_from_pack ~ref_length ~windows =
   let delta = Cartonnage.Entry.meta entry in
   let entry =
     match delta with
-    | _, Some { source; raw; _ } when Hashtbl.mem stored source ->
+    | _, Some { source; raw; length; _ } when Hashtbl.mem stored source ->
         begin match Hashtbl.find_opt stored source with
         | Some depth ->
             let raw = (raw :> Bstr.t) in
-            let patch = Cartonnage.Patch.of_copy ~depth ~source raw in
+            let patch = Cartonnage.Patch.of_copy ~depth ~source ~length raw in
             Cartonnage.Target.make ~patch entry
         | None -> Cartonnage.Target.make entry
         end
@@ -1068,10 +1073,12 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
   let t = make ?pagesize ?cachesize ~z ~ref_length pack in
   let raw_bytes = Hashtbl.create 0x7ff in
   let consumed_of_cursor = Hashtbl.create 0x7ff in
+  let inflated_of_cursor = Hashtbl.create 0x7ff in
   let on_entry ~max:_ entry =
     let cursor = entry.offset and consumed = entry.consumed in
     let bstr = Carton.map t ~cursor ~consumed in
     Hashtbl.add raw_bytes cursor bstr;
+    Hashtbl.add inflated_of_cursor cursor (entry.size :> int);
     Hashtbl.add consumed_of_cursor cursor consumed
   in
   let seq = seq_of_filename pack in
@@ -1206,7 +1213,10 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
                 | Classified_node { depth; parent; _ } -> (depth, parent)
                 | Classified_base _ -> assert false
               in
-              let patch = Cartonnage.Patch.of_copy ~depth ~source:parent raw in
+              let length = Hashtbl.find inflated_of_cursor cursor in
+              let patch =
+                Cartonnage.Patch.of_copy ~depth ~source:parent ~length raw
+              in
               let e = Cartonnage.Entry.make ~kind uid ~length () in
               let dummy = Carton.Value.make ~kind (Bstr.create 0) in
               (Cartonnage.Target.make ~patch e, dummy)

@@ -45,7 +45,7 @@ module Patch : sig
     -> Duff.hunk list
     -> t
 
-  val of_copy : depth:int -> source:Carton.Uid.t -> Bstr.t -> t
+  val of_copy : depth:int -> source:Carton.Uid.t -> length:int -> Bstr.t -> t
   val source : t -> Carton.Uid.t
   val pp : Format.formatter -> t -> unit
   val length : t -> int
