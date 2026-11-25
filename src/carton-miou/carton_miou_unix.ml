@@ -67,12 +67,12 @@ type config = {
   ; on_object: cursor:int -> Carton.Value.t -> Carton.Uid.t -> unit
 }
 
-let _min_threads = Int.min 4 (Stdlib.Domain.recommended_domain_count ())
+let _min_threads = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1)
 
 let config ?(threads = _min_threads) ?(pagesize = getpagesize ()) ?cachesize
     ?(on_entry = ignorem) ?(on_object = ignore3) ~ref_length identify =
   {
-    threads= threads
+    threads
   ; pagesize= Some pagesize
   ; cachesize
   ; ref_length
@@ -905,6 +905,9 @@ type sort = {
 }
 [@@unboxed]
 
+let iter_s fn lst =
+  List.map (fun v -> Miou.async @@ fun () -> fn v) lst |> Miou.await_all
+
 let merge :
        cfg:config
     -> digest:Carton.First_pass.digest
@@ -915,7 +918,9 @@ let merge :
  fun ~cfg ~digest ~sort ?level filenames ->
   let ref_length = cfg.ref_length in
   let fn filename = entries_of_pack ~cfg ~digest filename in
-  let entries = Miou.parallel fn filenames in
+  let entries =
+    if cfg.threads <= 0 then iter_s fn filenames else Miou.parallel fn filenames
+  in
   let entries =
     List.map (function Ok arr -> arr | Error exn -> raise exn) entries
   in
