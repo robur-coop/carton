@@ -22,7 +22,7 @@ val make :
 type entry = { offset: int; crc: Optint.t; consumed: int; size: int }
 
 type config = {
-    threads: int option
+    threads: int
   ; pagesize: int option
   ; cachesize: int option
   ; ref_length: int
