@@ -58,7 +58,7 @@ let make ?(pagesize = getpagesize ()) ?cachesize ?z ~ref_length ?(index = never)
 type entry = { offset: int; crc: Optint.t; consumed: int; size: int }
 
 type config = {
-    threads: int option
+    threads: int
   ; pagesize: int option
   ; cachesize: int option
   ; ref_length: int
@@ -67,12 +67,12 @@ type config = {
   ; on_object: cursor:int -> Carton.Value.t -> Carton.Uid.t -> unit
 }
 
-let _min_threads = Int.min 4 (Stdlib.Domain.recommended_domain_count ())
+let _min_threads = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1)
 
 let config ?(threads = _min_threads) ?(pagesize = getpagesize ()) ?cachesize
     ?(on_entry = ignorem) ?(on_object = ignore3) ~ref_length identify =
   {
-    threads= Some threads
+    threads
   ; pagesize= Some pagesize
   ; cachesize
   ; ref_length
@@ -393,7 +393,7 @@ let verify_from_pack
     | Some cursor -> Carton.Unresolved_base { cursor }
     | None -> Unresolved_node { cursor= oracle.Carton.cursor ~pos }
   in
-  verify ?threads ~on:on_object t oracle matrix;
+  verify ~threads ~on:on_object t oracle matrix;
   (matrix, oracle.hash)
 
 (** generate entries to pack from a pack file *)
@@ -441,7 +441,7 @@ let entries_of_pack ~cfg ~digest filename =
     let length = Carton.Value.length value in
     Miou.Mutex.protect mutex @@ fun () -> Hashtbl.add size uid length
   in
-  verify ?threads:cfg.threads ~on t oracle matrix;
+  verify ~threads:cfg.threads ~on t oracle matrix;
   let idx = Hashtbl.create 0x7ff in
   let t = Carton.with_index t (Hashtbl.find idx) in
   let fn = function
@@ -645,7 +645,8 @@ let verify_from_idx
     make ?pagesize ?cachesize ~z ~ref_length ~index
       (Fpath.set_ext ".pack" filename)
   in
-  let oracle = Miou.call @@ fun () -> compile ~on:on_entry ~identify pack idx in
+  let call fn = if threads <= 0 then Miou.async fn else Miou.call fn in
+  let oracle = call @@ fun () -> compile ~on:on_entry ~identify pack idx in
   let oracle = Miou.await_exn oracle in
   let fd1, _ = Carton.fd pack in
   let finally () = Unix.close fd0; Unix.close fd1 in
@@ -656,7 +657,7 @@ let verify_from_idx
     | Some cursor -> Carton.Unresolved_base { cursor }
     | None -> Unresolved_node { cursor= oracle.Carton.cursor ~pos }
   in
-  verify ?threads ~on:on_object pack oracle matrix;
+  verify ~threads ~on:on_object pack oracle matrix;
   (matrix, oracle.hash)
 
 (** packer *)
@@ -904,6 +905,9 @@ type sort = {
 }
 [@@unboxed]
 
+let iter_s fn lst =
+  List.map (fun v -> Miou.async @@ fun () -> fn v) lst |> Miou.await_all
+
 let merge :
        cfg:config
     -> digest:Carton.First_pass.digest
@@ -914,7 +918,9 @@ let merge :
  fun ~cfg ~digest ~sort ?level filenames ->
   let ref_length = cfg.ref_length in
   let fn filename = entries_of_pack ~cfg ~digest filename in
-  let entries = Miou.parallel fn filenames in
+  let entries =
+    if cfg.threads <= 0 then iter_s fn filenames else Miou.parallel fn filenames
+  in
   let entries =
     List.map (function Ok arr -> arr | Error exn -> raise exn) entries
   in
@@ -1102,7 +1108,7 @@ let delete_in_place ~cfg ~digest ~pack ?level uids_to_delete =
     Hashtbl.add sizes uid (Carton.Value.length value)
   in
   (* 1) verify the given PACK file *)
-  verify ?threads:cfg.threads ~on:on_object t oracle matrix;
+  verify ~threads:cfg.threads ~on:on_object t oracle matrix;
   let uid_to_cursor = Hashtbl.create 0x7ff in
   let entries = Hashtbl.create 0x7ff in
   let children_by_uid = Hashtbl.create 0x7ff in
